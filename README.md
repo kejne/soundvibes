@@ -29,6 +29,6 @@ sv --model ./models/ggml-tiny.en.bin
 - `jsonl`: emits JSON lines with `type`, `text`, `timestamp`.
 
 ## Documentation
-- PRD: `docs/prd-stt-cli.md`
-- Technical design: `docs/technical-design-stt-cli.md`
-- Acceptance tests: `docs/acceptance-tests.md`
+- PRD: `docs/mvp/prd-stt-cli.md`
+- Technical design: `docs/mvp/technical-design-stt-cli.md`
+- Acceptance tests: `docs/mvp/acceptance-tests.md`
