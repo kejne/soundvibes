@@ -16,6 +16,7 @@ pub struct VadConfig {
     pub energy_threshold: f32,
     pub silence_timeout: Duration,
     pub chunk_size: Duration,
+    pub debug: bool,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -25,12 +26,19 @@ pub struct SegmentInfo {
 }
 
 impl VadConfig {
-    pub fn new(enabled: bool, silence_timeout_ms: u64) -> Self {
+    pub fn new(
+        enabled: bool,
+        silence_timeout_ms: u64,
+        energy_threshold: f32,
+        chunk_ms: u64,
+        debug: bool,
+    ) -> Self {
         Self {
             enabled,
-            energy_threshold: DEFAULT_VAD_THRESHOLD,
+            energy_threshold,
             silence_timeout: Duration::from_millis(silence_timeout_ms),
-            chunk_size: Duration::from_millis(DEFAULT_CHUNK_MS),
+            chunk_size: Duration::from_millis(chunk_ms),
+            debug,
         }
     }
 }
@@ -167,6 +175,12 @@ where
 
         idle = 0;
         let rms = rms_energy(&chunk);
+        if vad.debug {
+            println!(
+                "VAD rms {rms:.4} threshold {threshold:.4} in_speech {in_speech}",
+                threshold = vad.energy_threshold,
+            );
+        }
 
         if !vad.enabled {
             utterance_index += 1;

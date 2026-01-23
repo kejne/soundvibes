@@ -29,8 +29,17 @@ struct Cli {
     #[arg(long, default_value_t = audio::DEFAULT_SILENCE_TIMEOUT_MS, value_name = "MS")]
     vad_silence_ms: u64,
 
+    #[arg(long, default_value_t = audio::DEFAULT_VAD_THRESHOLD, value_name = "LEVEL")]
+    vad_threshold: f32,
+
+    #[arg(long, default_value_t = audio::DEFAULT_CHUNK_MS, value_name = "MS")]
+    vad_chunk_ms: u64,
+
     #[arg(long, default_value_t = false)]
     debug_audio: bool,
+
+    #[arg(long, default_value_t = false)]
+    debug_vad: bool,
 
     #[arg(long, default_value_t = false)]
     list_devices: bool,
@@ -45,7 +54,10 @@ struct Config {
     format: OutputFormat,
     vad: VadMode,
     vad_silence_ms: u64,
+    vad_threshold: f32,
+    vad_chunk_ms: u64,
     debug_audio: bool,
+    debug_vad: bool,
     list_devices: bool,
 }
 
@@ -59,7 +71,10 @@ impl Config {
             format: cli.format,
             vad: cli.vad,
             vad_silence_ms: cli.vad_silence_ms,
+            vad_threshold: cli.vad_threshold,
+            vad_chunk_ms: cli.vad_chunk_ms,
             debug_audio: cli.debug_audio,
+            debug_vad: cli.debug_vad,
             list_devices: cli.list_devices,
         }
     }
@@ -99,6 +114,8 @@ fn main() {
     println!("Format: {:?}", config.format);
     println!("VAD: {:?}", config.vad);
     println!("VAD silence timeout: {} ms", config.vad_silence_ms);
+    println!("VAD threshold: {:.4}", config.vad_threshold);
+    println!("VAD chunk: {} ms", config.vad_chunk_ms);
     if let Some(device) = &config.device {
         println!("Device: {device}");
     }
@@ -128,7 +145,13 @@ fn run_capture(config: &Config) -> Result<(), String> {
         .ok_or_else(|| "model path is required".to_string())?;
     let context = WhisperContext::from_file(model_path).map_err(|err| err.to_string())?;
     let capture = audio::start_capture(&host, config.device.as_deref(), config.sample_rate)?;
-    let vad = audio::VadConfig::new(config.vad == VadMode::On, config.vad_silence_ms);
+    let vad = audio::VadConfig::new(
+        config.vad == VadMode::On,
+        config.vad_silence_ms,
+        config.vad_threshold,
+        config.vad_chunk_ms,
+        config.debug_vad,
+    );
     println!("Capturing audio stream. Press Ctrl+C to stop.");
     audio::stream_segments(capture, config.sample_rate, vad, |samples, info| {
         let transcript = context
