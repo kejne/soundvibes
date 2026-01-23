@@ -30,6 +30,25 @@ Linux users need a simple, offline, real-time voice-to-text tool that does not r
 - Streaming output prints partial results as they change and final results on end-of-utterance.
 - Errors are returned with actionable messages (missing model, no mic, unsupported device).
 
+## CLI Spec (Draft)
+- Binary name: `stt`
+- Required flags:
+  - `--model <path>`: path to a local whisper.cpp ggml model file.
+- Optional flags:
+  - `--language <code>`: language hint (default: `auto`).
+  - `--device <name>`: input device name or index (default: system default).
+  - `--sample-rate <hz>`: capture rate (default: 16000).
+  - `--format <mode>`: output format (`plain`, `jsonl`).
+  - `--vad <on|off>`: enable voice activity detection (default: on).
+- Output behavior:
+  - Partial transcripts update frequently on stdout.
+  - Final transcripts emit on end-of-utterance boundary.
+  - JSONL mode emits objects with `type`, `text`, `timestamp`.
+- Exit codes:
+  - `0`: success.
+  - `2`: invalid flags or missing model.
+  - `3`: audio device error.
+
 ## Architecture (High Level)
 - Audio capture: `cpal` for mic input at 16 kHz mono.
 - Audio chunking: 200-500 ms frames in a ring buffer.
