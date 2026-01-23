@@ -1,4 +1,6 @@
 models/*.bin
+target/
+.beads/export-state/
 
 # bv (beads viewer) local config and caches
 .bv/
