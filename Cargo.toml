@@ -5,3 +5,10 @@ edition = "2021"
 
 [dependencies]
 clap = { version = "4.5.27", features = ["derive"] }
+
+[dev-dependencies]
+hound = "3.5.1"
+
+[build-dependencies]
+bindgen = "0.71.0"
+cmake = "0.1.54"
