@@ -314,12 +314,14 @@ impl fmt::Display for AppError {
 
 impl Error for AppError {}
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 struct Hotkey {
     key: Key,
+    name: Option<String>,
     require_ctrl: bool,
     require_alt: bool,
     require_shift: bool,
+    require_super: bool,
 }
 
 impl Hotkey {
@@ -327,6 +329,25 @@ impl Hotkey {
         (!self.require_ctrl || state.ctrl)
             && (!self.require_alt || state.alt)
             && (!self.require_shift || state.shift)
+            && (!self.require_super || state.super_key)
+    }
+
+    fn matches_key(&self, key: Key, name: Option<&str>, state: &HotkeyState) -> bool {
+        if !self.matches(state) {
+            return false;
+        }
+
+        if key == self.key {
+            return true;
+        }
+
+        let Some(hotkey_name) = self.name.as_deref() else {
+            return false;
+        };
+        let Some(name) = name else {
+            return false;
+        };
+        hotkey_name == name.to_lowercase()
     }
 }
 
@@ -335,6 +356,7 @@ struct HotkeyState {
     ctrl: bool,
     alt: bool,
     shift: bool,
+    super_key: bool,
     active: bool,
 }
 
@@ -354,6 +376,7 @@ fn parse_hotkey(value: &str) -> Result<Hotkey, AppError> {
     let mut require_ctrl = false;
     let mut require_alt = false;
     let mut require_shift = false;
+    let mut require_super = false;
     let mut key_token: Option<String> = None;
 
     for part in normalized.split('+') {
@@ -365,6 +388,7 @@ fn parse_hotkey(value: &str) -> Result<Hotkey, AppError> {
             "ctrl" | "control" => require_ctrl = true,
             "alt" | "option" => require_alt = true,
             "shift" => require_shift = true,
+            "super" | "meta" | "win" | "cmd" | "command" => require_super = true,
             _ => {
                 if key_token.is_some() {
                     return Err(AppError::config(format!(
@@ -379,12 +403,19 @@ fn parse_hotkey(value: &str) -> Result<Hotkey, AppError> {
     let key_token = key_token.ok_or_else(|| AppError::config("hotkey missing key"))?;
     let key = parse_hotkey_key(&key_token)
         .ok_or_else(|| AppError::config(format!("unsupported hotkey key: {key_token}")))?;
+    let name = if key_token.len() == 1 {
+        Some(key_token.to_lowercase())
+    } else {
+        None
+    };
 
     Ok(Hotkey {
         key,
+        name,
         require_ctrl,
         require_alt,
         require_shift,
+        require_super,
     })
 }
 
@@ -471,7 +502,7 @@ fn start_hotkey_listener(hotkey: Hotkey) -> Result<Receiver<HotkeyEvent>, AppErr
         let result = rdev::listen(move |event| match event.event_type {
             EventType::KeyPress(key) => {
                 update_modifier_state(&mut state, key, true);
-                if key == hotkey.key && hotkey.matches(&state) && !state.active {
+                if hotkey.matches_key(key, event.name.as_deref(), &state) && !state.active {
                     state.active = true;
                     let _ = callback_sender.send(HotkeyEvent::Pressed);
                 }
@@ -501,6 +532,7 @@ fn update_modifier_state(state: &mut HotkeyState, key: Key, pressed: bool) {
         Key::ControlLeft | Key::ControlRight => state.ctrl = pressed,
         Key::Alt | Key::AltGr => state.alt = pressed,
         Key::ShiftLeft | Key::ShiftRight => state.shift = pressed,
+        Key::MetaLeft | Key::MetaRight => state.super_key = pressed,
         _ => {}
     }
 }
