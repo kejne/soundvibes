@@ -18,6 +18,7 @@ pub struct VadConfig {
     pub energy_threshold: f32,
     pub silence_timeout: Duration,
     pub chunk_size: Duration,
+    #[allow(dead_code)]
     pub debug: bool,
 }
 
@@ -192,6 +193,7 @@ pub fn start_capture(
     })
 }
 
+#[allow(dead_code)]
 pub fn stream_segments<F>(
     mut capture: Capture,
     sample_rate: u32,
@@ -280,6 +282,43 @@ where
     }
 }
 
+pub fn drain_samples(capture: &mut Capture, output: &mut Vec<f32>) {
+    while let Some(sample) = capture.consumer.pop() {
+        output.push(sample);
+    }
+}
+
+pub fn discard_samples(capture: &mut Capture) {
+    while capture.consumer.pop().is_some() {}
+}
+
+pub fn trim_trailing_silence(samples: &[f32], sample_rate: u32, vad: &VadConfig) -> Vec<f32> {
+    if samples.is_empty() || !vad.enabled {
+        return samples.to_vec();
+    }
+
+    let chunk_samples = duration_to_samples(sample_rate, vad.chunk_size).max(1);
+    let max_silence_ms = vad.silence_timeout.as_millis() as u64;
+    let mut silence_ms = 0u64;
+    let mut end = samples.len();
+
+    while end > 0 {
+        let start = end.saturating_sub(chunk_samples);
+        let chunk = &samples[start..end];
+        let rms = rms_energy(chunk);
+        if rms >= vad.energy_threshold {
+            break;
+        }
+        silence_ms += samples_to_ms(chunk.len(), sample_rate);
+        end = start;
+        if silence_ms >= max_silence_ms {
+            break;
+        }
+    }
+
+    samples[..end].to_vec()
+}
+
 fn rms_energy(samples: &[f32]) -> f32 {
     let sum_squares = samples.iter().map(|sample| sample * sample).sum::<f32>();
     (sum_squares / samples.len() as f32).sqrt()
@@ -290,7 +329,7 @@ fn duration_to_samples(sample_rate: u32, duration: Duration) -> usize {
     (sample_rate as f32 * seconds).round() as usize
 }
 
-fn samples_to_ms(samples: usize, sample_rate: u32) -> u64 {
+pub fn samples_to_ms(samples: usize, sample_rate: u32) -> u64 {
     if sample_rate == 0 {
         return 0;
     }

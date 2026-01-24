@@ -2,6 +2,7 @@ mod audio;
 
 use clap::parser::ValueSource;
 use clap::{CommandFactory, FromArgMatches, Parser, ValueEnum};
+use rdev::{EventType, Key};
 use serde::Deserialize;
 use std::env;
 use std::error::Error;
@@ -9,6 +10,9 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process;
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::thread;
+use std::time::Duration;
 use sv::whisper::WhisperContext;
 
 #[derive(Parser, Debug)]
@@ -65,6 +69,7 @@ struct Config {
     debug_audio: bool,
     debug_vad: bool,
     list_devices: bool,
+    hotkey: String,
 }
 
 impl Config {
@@ -96,7 +101,7 @@ impl Config {
         let vad = if matches.value_source("vad") == Some(ValueSource::CommandLine) {
             cli.vad
         } else {
-            file.vad.unwrap_or(cli.vad)
+            file.vad.map(VadSetting::into_mode).unwrap_or(cli.vad)
         };
 
         let vad_silence_ms =
@@ -139,6 +144,8 @@ impl Config {
             file.list_devices.unwrap_or(cli.list_devices)
         };
 
+        let hotkey = file.hotkey.unwrap_or_else(|| "ctrl+`".to_string());
+
         let model_path = if matches.value_source("model") == Some(ValueSource::CommandLine) {
             cli.model
         } else {
@@ -158,6 +165,7 @@ impl Config {
             debug_audio,
             debug_vad,
             list_devices,
+            hotkey,
         }
     }
 }
@@ -176,6 +184,23 @@ enum VadMode {
     Off,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum VadSetting {
+    Bool(bool),
+    Mode(VadMode),
+}
+
+impl VadSetting {
+    fn into_mode(self) -> VadMode {
+        match self {
+            VadSetting::Bool(true) => VadMode::On,
+            VadSetting::Bool(false) => VadMode::Off,
+            VadSetting::Mode(mode) => mode,
+        }
+    }
+}
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct FileConfig {
@@ -184,13 +209,14 @@ struct FileConfig {
     device: Option<String>,
     sample_rate: Option<u32>,
     format: Option<OutputFormat>,
-    vad: Option<VadMode>,
+    vad: Option<VadSetting>,
     vad_silence_ms: Option<u64>,
     vad_threshold: Option<f32>,
     vad_chunk_ms: Option<u64>,
     debug_audio: Option<bool>,
     debug_vad: Option<bool>,
     list_devices: Option<bool>,
+    hotkey: Option<String>,
 }
 
 fn main() {
@@ -225,6 +251,7 @@ fn main() {
     println!("VAD silence timeout: {} ms", config.vad_silence_ms);
     println!("VAD threshold: {:.4}", config.vad_threshold);
     println!("VAD chunk: {} ms", config.vad_chunk_ms);
+    println!("Hotkey: {}", config.hotkey);
     if let Some(device) = &config.device {
         println!("Device: {device}");
     }
@@ -287,6 +314,197 @@ impl fmt::Display for AppError {
 
 impl Error for AppError {}
 
+#[derive(Debug, Copy, Clone)]
+struct Hotkey {
+    key: Key,
+    require_ctrl: bool,
+    require_alt: bool,
+    require_shift: bool,
+}
+
+impl Hotkey {
+    fn matches(&self, state: &HotkeyState) -> bool {
+        (!self.require_ctrl || state.ctrl)
+            && (!self.require_alt || state.alt)
+            && (!self.require_shift || state.shift)
+    }
+}
+
+#[derive(Debug, Default)]
+struct HotkeyState {
+    ctrl: bool,
+    alt: bool,
+    shift: bool,
+    active: bool,
+}
+
+#[derive(Debug)]
+enum HotkeyEvent {
+    Pressed,
+    Released,
+    Error(String),
+}
+
+fn parse_hotkey(value: &str) -> Result<Hotkey, AppError> {
+    let normalized = value.trim().to_lowercase();
+    if normalized.is_empty() {
+        return Err(AppError::config("hotkey cannot be empty"));
+    }
+
+    let mut require_ctrl = false;
+    let mut require_alt = false;
+    let mut require_shift = false;
+    let mut key_token: Option<String> = None;
+
+    for part in normalized.split('+') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        match part {
+            "ctrl" | "control" => require_ctrl = true,
+            "alt" | "option" => require_alt = true,
+            "shift" => require_shift = true,
+            _ => {
+                if key_token.is_some() {
+                    return Err(AppError::config(format!(
+                        "hotkey has multiple keys: {value}"
+                    )));
+                }
+                key_token = Some(part.to_string());
+            }
+        }
+    }
+
+    let key_token = key_token.ok_or_else(|| AppError::config("hotkey missing key"))?;
+    let key = parse_hotkey_key(&key_token)
+        .ok_or_else(|| AppError::config(format!("unsupported hotkey key: {key_token}")))?;
+
+    Ok(Hotkey {
+        key,
+        require_ctrl,
+        require_alt,
+        require_shift,
+    })
+}
+
+fn parse_hotkey_key(token: &str) -> Option<Key> {
+    let token = token.trim();
+    if token.len() == 1 {
+        let ch = token.chars().next()?;
+        if ch.is_ascii_alphabetic() {
+            return Some(match ch.to_ascii_lowercase() {
+                'a' => Key::KeyA,
+                'b' => Key::KeyB,
+                'c' => Key::KeyC,
+                'd' => Key::KeyD,
+                'e' => Key::KeyE,
+                'f' => Key::KeyF,
+                'g' => Key::KeyG,
+                'h' => Key::KeyH,
+                'i' => Key::KeyI,
+                'j' => Key::KeyJ,
+                'k' => Key::KeyK,
+                'l' => Key::KeyL,
+                'm' => Key::KeyM,
+                'n' => Key::KeyN,
+                'o' => Key::KeyO,
+                'p' => Key::KeyP,
+                'q' => Key::KeyQ,
+                'r' => Key::KeyR,
+                's' => Key::KeyS,
+                't' => Key::KeyT,
+                'u' => Key::KeyU,
+                'v' => Key::KeyV,
+                'w' => Key::KeyW,
+                'x' => Key::KeyX,
+                'y' => Key::KeyY,
+                'z' => Key::KeyZ,
+                _ => return None,
+            });
+        }
+        if ch.is_ascii_digit() {
+            return Some(match ch {
+                '0' => Key::Num0,
+                '1' => Key::Num1,
+                '2' => Key::Num2,
+                '3' => Key::Num3,
+                '4' => Key::Num4,
+                '5' => Key::Num5,
+                '6' => Key::Num6,
+                '7' => Key::Num7,
+                '8' => Key::Num8,
+                '9' => Key::Num9,
+                _ => return None,
+            });
+        }
+    }
+
+    match token {
+        "`" | "backquote" | "backtick" | "grave" | "tilde" => Some(Key::BackQuote),
+        "space" => Some(Key::Space),
+        "tab" => Some(Key::Tab),
+        "enter" | "return" => Some(Key::Return),
+        "esc" | "escape" => Some(Key::Escape),
+        "f1" => Some(Key::F1),
+        "f2" => Some(Key::F2),
+        "f3" => Some(Key::F3),
+        "f4" => Some(Key::F4),
+        "f5" => Some(Key::F5),
+        "f6" => Some(Key::F6),
+        "f7" => Some(Key::F7),
+        "f8" => Some(Key::F8),
+        "f9" => Some(Key::F9),
+        "f10" => Some(Key::F10),
+        "f11" => Some(Key::F11),
+        "f12" => Some(Key::F12),
+        _ => None,
+    }
+}
+
+fn start_hotkey_listener(hotkey: Hotkey) -> Result<Receiver<HotkeyEvent>, AppError> {
+    let (sender, receiver) = mpsc::channel();
+
+    thread::spawn(move || {
+        let mut state = HotkeyState::default();
+        let callback_sender = sender.clone();
+        let result = rdev::listen(move |event| match event.event_type {
+            EventType::KeyPress(key) => {
+                update_modifier_state(&mut state, key, true);
+                if key == hotkey.key && hotkey.matches(&state) && !state.active {
+                    state.active = true;
+                    let _ = callback_sender.send(HotkeyEvent::Pressed);
+                }
+            }
+            EventType::KeyRelease(key) => {
+                if key == hotkey.key && state.active {
+                    state.active = false;
+                    let _ = callback_sender.send(HotkeyEvent::Released);
+                }
+                update_modifier_state(&mut state, key, false);
+            }
+            _ => {}
+        });
+
+        if let Err(err) = result {
+            let _ = sender.send(HotkeyEvent::Error(format!(
+                "hotkey listener error: {err:?}"
+            )));
+        }
+    });
+
+    Ok(receiver)
+}
+
+fn update_modifier_state(state: &mut HotkeyState, key: Key, pressed: bool) {
+    match key {
+        Key::ControlLeft | Key::ControlRight => state.ctrl = pressed,
+        Key::Alt | Key::AltGr => state.alt = pressed,
+        Key::ShiftLeft | Key::ShiftRight => state.shift = pressed,
+        _ => {}
+    }
+}
+
 fn load_config_file() -> Result<FileConfig, AppError> {
     let path = match config_path() {
         Some(path) => path,
@@ -337,7 +555,7 @@ fn run_capture(config: &Config) -> Result<(), AppError> {
         .ok_or_else(|| AppError::config("model path is required"))?;
     let context =
         WhisperContext::from_file(model_path).map_err(|err| AppError::runtime(err.to_string()))?;
-    let capture = audio::start_capture(&host, config.device.as_deref(), config.sample_rate)
+    let mut capture = audio::start_capture(&host, config.device.as_deref(), config.sample_rate)
         .map_err(|err| match err.kind {
             audio::AudioErrorKind::DeviceNotFound if config.device.is_some() => {
                 AppError::config(err.message)
@@ -351,15 +569,63 @@ fn run_capture(config: &Config) -> Result<(), AppError> {
         config.vad_chunk_ms,
         config.debug_vad,
     );
-    println!("Capturing audio stream. Press Ctrl+C to stop.");
-    audio::stream_segments(capture, config.sample_rate, vad, |samples, info| {
-        let transcript = context
-            .transcribe(samples, Some(&config.language))
-            .map_err(|err| err.to_string())?;
-        emit_transcript(config.format, &transcript, info)
-    })
-    .map_err(|err| AppError::runtime(err))?;
-    Ok(())
+    let hotkey = parse_hotkey(&config.hotkey)?;
+    let hotkey_events = start_hotkey_listener(hotkey)?;
+    println!(
+        "Hold {} to talk. Release to transcribe. Press Ctrl+C to stop.",
+        config.hotkey
+    );
+
+    let mut recording = false;
+    let mut buffer = Vec::new();
+    let mut utterance_index = 0u64;
+
+    loop {
+        match hotkey_events.recv_timeout(Duration::from_millis(20)) {
+            Ok(HotkeyEvent::Pressed) => {
+                if !recording {
+                    recording = true;
+                    buffer.clear();
+                    audio::discard_samples(&mut capture);
+                    println!("Hotkey pressed. Recording...");
+                }
+            }
+            Ok(HotkeyEvent::Released) => {
+                if recording {
+                    recording = false;
+                    audio::drain_samples(&mut capture, &mut buffer);
+                    let trimmed = audio::trim_trailing_silence(&buffer, config.sample_rate, &vad);
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+                    utterance_index += 1;
+                    let duration_ms = audio::samples_to_ms(trimmed.len(), config.sample_rate);
+                    let transcript = context
+                        .transcribe(&trimmed, Some(&config.language))
+                        .map_err(|err| AppError::runtime(err.to_string()))?;
+                    emit_transcript(
+                        config.format,
+                        &transcript,
+                        audio::SegmentInfo {
+                            index: utterance_index,
+                            duration_ms,
+                        },
+                    )
+                    .map_err(AppError::runtime)?;
+                    println!("Ready for next utterance.");
+                }
+            }
+            Ok(HotkeyEvent::Error(message)) => return Err(AppError::runtime(message)),
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => {
+                return Err(AppError::runtime("hotkey listener disconnected"));
+            }
+        }
+
+        if recording {
+            audio::drain_samples(&mut capture, &mut buffer);
+        }
+    }
 }
 
 fn emit_transcript(

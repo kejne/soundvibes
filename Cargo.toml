@@ -10,6 +10,7 @@ ringbuf = "0.3.3"
 alsa-sys = "0.3.1"
 serde = { version = "1.0.197", features = ["derive"] }
 toml = "0.8.12"
+rdev = "0.5.3"
 
 [dev-dependencies]
 hound = "3.5.1"
