@@ -7,12 +7,11 @@ This document describes the technical design for the `sv` CLI that performs offl
 - Single binary plus local model file.
 - Push-to-talk capture with transcription on key release.
 - Best-effort latency on CPU.
-- Support global hotkeys on Wayland and X11.
-- Support daemon mode with text injection at the cursor.
+- Support daemon mode with socket-based control and text injection at the cursor.
 
 ## Architecture
 - CLI entrypoint loads configuration.
-- Hotkey listener controls capture start/stop.
+- Command listener controls capture start/stop.
 - Audio capture pipeline reads microphone input via `cpal` while key is held.
 - A buffer aggregates audio frames for post-recording inference.
 - Optional VAD trims trailing silence after release.
@@ -43,10 +42,11 @@ This document describes the technical design for the `sv` CLI that performs offl
 - Simple energy-based threshold to start; upgradeable later.
 
 ### Hotkey Capture
-- Use a backend abstraction to support multiple session types.
-- Wayland: register global shortcuts through `xdg-desktop-portal`.
-- X11: register global shortcuts via X11 grab APIs or a focused-only fallback.
-- Provide graceful errors when a portal is unavailable or permissions are denied.
+### Command Control
+- Run `sv --daemon` to start the background service.
+- Run `sv` to send a toggle command to the daemon over a Unix socket.
+- Store the socket in `${XDG_RUNTIME_DIR}/soundvibes/sv.sock`.
+- Provide actionable errors when the daemon socket is unavailable.
 
 ### Text Injection
 - Use a backend abstraction for output delivery.
@@ -55,7 +55,8 @@ This document describes the technical design for the `sv` CLI that performs offl
 - If injection is unavailable, fallback to stdout with a warning.
 
 ### Daemon Mode
-- Long-running process that registers the hotkey and waits for key events.
+- Long-running process that listens for toggle commands on a Unix socket.
+- On toggle on, start capture; on toggle off, complete transcription.
 - On capture completion, either print or inject text based on `mode`.
 - Systemd user unit or foreground mode used to manage lifecycle.
 
@@ -75,8 +76,8 @@ This document describes the technical design for the `sv` CLI that performs offl
 
 ## Data Flow
 1. CLI loads config and model.
-2. Hotkey press starts audio capture.
-3. Audio capture stores samples until key release.
+2. CLI toggle command starts audio capture in the daemon.
+3. Audio capture stores samples until toggle off.
 4. Optional VAD trims trailing silence.
 5. Inference runs on captured audio, returns final text.
 6. Output formatter prints or injects final result.
@@ -85,13 +86,13 @@ This document describes the technical design for the `sv` CLI that performs offl
 - Missing model: exit code 2 with message.
 - No input device: exit code 3 with message.
 - Stream errors: log and exit gracefully.
-- Portal errors: emit actionable guidance on enabling permissions.
+- Daemon socket missing: emit actionable guidance for starting `sv --daemon`.
 
 ## Validation
 - Manual mic test with `sv` using a valid config file.
 - Validate final transcript after key release.
 - Confirm offline operation by disconnecting network.
-- Validate global shortcuts on Wayland and X11.
+- Validate socket toggle commands against the daemon.
 - Validate injection into a focused editor.
 
 ## Open Questions

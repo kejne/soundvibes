@@ -6,8 +6,8 @@ Linux users need a simple, offline push-to-talk voice-to-text tool that does not
 ## Goals
 - Provide push-to-talk recording from the default microphone with transcription on key release.
 - Work fully offline with a small model and fast post-recording transcription.
-- Support both X11 and Wayland for global hotkeys.
-- Run as a background daemon that can inject text at the cursor.
+- Run as a background daemon that listens for control commands over a local socket.
+- Use the same binary: `sv --daemon` runs the service, `sv` toggles capture via the socket.
 - Ship as a single Rust CLI binary plus a bundled model file.
 
 ## Target Users
@@ -20,9 +20,9 @@ Linux users need a simple, offline push-to-talk voice-to-text tool that does not
 - Small offline model (whisper.cpp tiny/base with quantization).
 - Configuration via `config.toml` in the XDG config directory.
 - Works on Linux x86_64.
-- Wayland support via portal-based global shortcuts.
-- X11 support via native global shortcut capture.
-- Daemon mode that injects transcribed text at the cursor when requested.
+- Daemon mode that listens on a local socket and captures on toggle.
+- Socket-controlled CLI toggle for start/stop using the same binary.
+- Daemon mode can inject transcribed text at the cursor when requested.
 
 ## Non-Goals (MVP)
 - GUI or tray integration.
@@ -32,9 +32,10 @@ Linux users need a simple, offline push-to-talk voice-to-text tool that does not
 - Cross-platform support outside Linux.
 
 ## User Experience
-- Command: `sv`
-- Configure model and options in the config file, then run the CLI.
-- Hold the capture key to record; release to transcribe and print the final text.
+- Command: `sv --daemon` to start the background service.
+- Command: `sv` to toggle capture state via the daemon socket.
+- Configure model and options in the config file, then run the daemon.
+- When capture is toggled on, start recording; when toggled off, transcribe and output.
 - Errors are returned with actionable messages (missing model, no mic, unsupported device).
 - In daemon mode, the capture key injects text into the focused app instead of stdout.
 
@@ -49,11 +50,11 @@ Linux users need a simple, offline push-to-talk voice-to-text tool that does not
 
 ## Architecture (High Level)
 - Audio capture: `cpal` for mic input at 16 kHz mono.
-- Push-to-talk buffer: capture while key is held, stop on release.
+- Push-to-talk buffer: capture while toggled on, stop on toggle off.
 - Optional VAD: trim trailing silence after release.
 - Inference: whisper.cpp via Rust FFI bindings, using quantized small models.
 - Output: final text output to stdout after transcription completes.
-- Hotkey capture: Wayland portal shortcuts or X11 global shortcuts.
+- Control plane: daemon listens on a local socket for toggle commands.
 - Text injection: Wayland portal virtual keyboard or X11 XTest.
 
 ## Model Choice
@@ -79,14 +80,14 @@ Linux users need a simple, offline push-to-talk voice-to-text tool that does not
 
 ## Validation Plan
 - Manual test on Linux laptop with default microphone.
-- Verify transcript appears shortly after key release.
+- Verify transcript appears shortly after toggling capture off.
 - Confirm tool runs without network access.
-- Validate global shortcuts on Wayland and X11.
+- Validate daemon socket toggle from the CLI.
 - Validate text injection into a focused editor.
 
 ## Risks & Mitigations
 - CPU performance too slow: use smaller quantized model and VAD.
 - Audio capture issues on some devices: provide device selection flag.
 - Model size too large: allow user to swap model via CLI flag.
-- Wayland portals unavailable: fallback to terminal-only capture and log guidance.
+- Daemon not running: surface an actionable error from the CLI toggle.
 - Text injection permissions vary by compositor: document portal prompts and limitations.
