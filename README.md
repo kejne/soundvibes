@@ -32,6 +32,15 @@ hotkey = "ctrl+`"
 vad = false
 ```
 
+### Hotkey syntax
+- Use a `+`-separated combo with optional modifiers (`ctrl`, `alt`, `shift`, `super`) and a single key.
+- Modifiers are case-insensitive and can be combined (example: `ctrl+shift+space`).
+- For the super modifier, use `super`, `meta`, `win`, or `cmd`.
+- Supported keys include letters (`a`-`z`), digits (`0`-`9`), `space`, `tab`, `enter`, `esc`, function keys (`f1`-`f12`), and the backtick key.
+- Special characters must be quoted in TOML, so wrap combos like `ctrl+`` in double quotes.
+- For the backtick key, use `` ` `` in the combo (example: `hotkey = "ctrl+`"`).
+- Literal symbol keys are matched by character, so use the exact printable character in the combo.
+
 ## Usage
 ```bash
 sv

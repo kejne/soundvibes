@@ -7,6 +7,8 @@ This document describes the technical design for the `sv` CLI that performs offl
 - Single binary plus local model file.
 - Push-to-talk capture with transcription on key release.
 - Best-effort latency on CPU.
+- Support global hotkeys on Wayland and X11.
+- Support daemon mode with text injection at the cursor.
 
 ## Architecture
 - CLI entrypoint loads configuration.
@@ -16,6 +18,7 @@ This document describes the technical design for the `sv` CLI that performs offl
 - Optional VAD trims trailing silence after release.
 - whisper.cpp runs inference on the captured buffer.
 - Output stream prints a final transcript.
+- Optional daemon service runs continuously and injects text into the focused app.
 
 ## Components
 
@@ -24,6 +27,7 @@ This document describes the technical design for the `sv` CLI that performs offl
 - No CLI flags in MVP; configuration is file-only.
 - Defaults are applied if keys are missing.
 - Configuration struct shared across pipeline components.
+- Add `mode` to select `stdout` (default) or `inject` for daemon output.
 
 ### Audio Capture
 - Use `cpal` to select input device and stream 16 kHz mono.
@@ -38,6 +42,23 @@ This document describes the technical design for the `sv` CLI that performs offl
 - Optional VAD to trim trailing silence after release.
 - Simple energy-based threshold to start; upgradeable later.
 
+### Hotkey Capture
+- Use a backend abstraction to support multiple session types.
+- Wayland: register global shortcuts through `xdg-desktop-portal`.
+- X11: register global shortcuts via X11 grab APIs or a focused-only fallback.
+- Provide graceful errors when a portal is unavailable or permissions are denied.
+
+### Text Injection
+- Use a backend abstraction for output delivery.
+- Wayland: use portal virtual keyboard or input capture APIs.
+- X11: use XTest to synthesize keypresses into the focused window.
+- If injection is unavailable, fallback to stdout with a warning.
+
+### Daemon Mode
+- Long-running process that registers the hotkey and waits for key events.
+- On capture completion, either print or inject text based on `mode`.
+- Systemd user unit or foreground mode used to manage lifecycle.
+
 ### Inference Engine
 - whisper.cpp bound via Rust FFI.
 - Load ggml model at startup.
@@ -50,7 +71,7 @@ This document describes the technical design for the `sv` CLI that performs offl
 
 ## Configuration
 - Format: TOML.
-- Example fields: `model`, `language`, `device`, `sample_rate`, `format`, `hotkey`, `vad`.
+- Example fields: `model`, `language`, `device`, `sample_rate`, `format`, `hotkey`, `vad`, `mode`.
 
 ## Data Flow
 1. CLI loads config and model.
@@ -58,18 +79,22 @@ This document describes the technical design for the `sv` CLI that performs offl
 3. Audio capture stores samples until key release.
 4. Optional VAD trims trailing silence.
 5. Inference runs on captured audio, returns final text.
-6. Output formatter prints final result.
+6. Output formatter prints or injects final result.
 
 ## Error Handling
 - Missing model: exit code 2 with message.
 - No input device: exit code 3 with message.
 - Stream errors: log and exit gracefully.
+- Portal errors: emit actionable guidance on enabling permissions.
 
 ## Validation
 - Manual mic test with `sv` using a valid config file.
 - Validate final transcript after key release.
 - Confirm offline operation by disconnecting network.
+- Validate global shortcuts on Wayland and X11.
+- Validate injection into a focused editor.
 
 ## Open Questions
 - Best default model (tiny vs base) for CPU speed.
 - VAD threshold calibration on typical laptop microphones.
+- Best supported portal for text injection across compositors.

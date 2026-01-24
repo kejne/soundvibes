@@ -6,6 +6,8 @@ Linux users need a simple, offline push-to-talk voice-to-text tool that does not
 ## Goals
 - Provide push-to-talk recording from the default microphone with transcription on key release.
 - Work fully offline with a small model and fast post-recording transcription.
+- Support both X11 and Wayland for global hotkeys.
+- Run as a background daemon that can inject text at the cursor.
 - Ship as a single Rust CLI binary plus a bundled model file.
 
 ## Target Users
@@ -18,18 +20,23 @@ Linux users need a simple, offline push-to-talk voice-to-text tool that does not
 - Small offline model (whisper.cpp tiny/base with quantization).
 - Configuration via `config.toml` in the XDG config directory.
 - Works on Linux x86_64.
+- Wayland support via portal-based global shortcuts.
+- X11 support via native global shortcut capture.
+- Daemon mode that injects transcribed text at the cursor when requested.
 
 ## Non-Goals (MVP)
 - GUI or tray integration.
 - Speaker diarization.
 - Automatic punctuation or formatting.
 - Cloud sync or remote APIs.
+- Cross-platform support outside Linux.
 
 ## User Experience
 - Command: `sv`
 - Configure model and options in the config file, then run the CLI.
 - Hold the capture key to record; release to transcribe and print the final text.
 - Errors are returned with actionable messages (missing model, no mic, unsupported device).
+- In daemon mode, the capture key injects text into the focused app instead of stdout.
 
 ## Output Behavior
 - One final transcript emitted on key release.
@@ -46,6 +53,8 @@ Linux users need a simple, offline push-to-talk voice-to-text tool that does not
 - Optional VAD: trim trailing silence after release.
 - Inference: whisper.cpp via Rust FFI bindings, using quantized small models.
 - Output: final text output to stdout after transcription completes.
+- Hotkey capture: Wayland portal shortcuts or X11 global shortcuts.
+- Text injection: Wayland portal virtual keyboard or X11 XTest.
 
 ## Model Choice
 - Engine: whisper.cpp (FFI) for best accuracy-to-size tradeoff.
@@ -66,14 +75,18 @@ Linux users need a simple, offline push-to-talk voice-to-text tool that does not
 - Load config from XDG base directory if available.
 - Default path: `${XDG_CONFIG_HOME:-~/.config}/soundvibes/config.toml`.
 - Config file format: TOML.
-- Config keys: `model`, `language`, `device`, `sample_rate`, `format`, `hotkey`, `vad`.
+- Config keys: `model`, `language`, `device`, `sample_rate`, `format`, `hotkey`, `vad`, `mode`.
 
 ## Validation Plan
 - Manual test on Linux laptop with default microphone.
 - Verify transcript appears shortly after key release.
 - Confirm tool runs without network access.
+- Validate global shortcuts on Wayland and X11.
+- Validate text injection into a focused editor.
 
 ## Risks & Mitigations
 - CPU performance too slow: use smaller quantized model and VAD.
 - Audio capture issues on some devices: provide device selection flag.
 - Model size too large: allow user to swap model via CLI flag.
+- Wayland portals unavailable: fallback to terminal-only capture and log guidance.
+- Text injection permissions vary by compositor: document portal prompts and limitations.
