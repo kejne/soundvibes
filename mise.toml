@@ -5,3 +5,7 @@ run = "mkdir -p models && curl -L -o models/ggml-tiny.en.bin https://huggingface
 [tasks.run-local]
 description = "Run sv with local model"
 run = "cargo run -- --model ./models/ggml-tiny.en.bin"
+
+[tasks.debug-local]
+description = "Run sv with local model"
+run = "cargo run -- --model ./models/ggml-tiny.en.bin --debug-vad"

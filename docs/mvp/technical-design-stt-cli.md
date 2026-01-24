@@ -1,64 +1,64 @@
 # Technical Design: Offline STT CLI (sv)
 
 ## Overview
-This document describes the technical design for the `sv` CLI that performs offline, real-time speech-to-text on Linux using whisper.cpp with a small quantized model.
+This document describes the technical design for the `sv` CLI that performs offline, push-to-talk speech-to-text on Linux using whisper.cpp with a small quantized model.
 
 ## Goals
 - Single binary plus local model file.
-- Real-time streaming output with partial and final transcripts.
+- Push-to-talk capture with transcription on key release.
 - Best-effort latency on CPU.
 
 ## Architecture
-- CLI entrypoint parses flags and config.
-- Audio capture pipeline reads microphone input via `cpal`.
-- A ring buffer aggregates audio frames into short chunks.
-- VAD determines end-of-utterance boundaries.
-- whisper.cpp runs inference on chunks and returns text updates.
-- Output stream prints partial and final transcripts.
+- CLI entrypoint loads configuration.
+- Hotkey listener controls capture start/stop.
+- Audio capture pipeline reads microphone input via `cpal` while key is held.
+- A buffer aggregates audio frames for post-recording inference.
+- Optional VAD trims trailing silence after release.
+- whisper.cpp runs inference on the captured buffer.
+- Output stream prints a final transcript.
 
 ## Components
 
-### CLI and Config
-- Argument parser (e.g., `clap`) for:
-  - `--model <path>`
-  - `--language <code>`
-  - `--device <name>`
-  - `--sample-rate <hz>`
-  - `--format <mode>`
-  - `--vad <on|off>`
+### Config
+- Load settings from `${XDG_CONFIG_HOME:-~/.config}/soundvibes/config.toml`.
+- No CLI flags in MVP; configuration is file-only.
+- Defaults are applied if keys are missing.
 - Configuration struct shared across pipeline components.
 
 ### Audio Capture
 - Use `cpal` to select input device and stream 16 kHz mono.
 - Convert samples to `f32` normalized range [-1.0, 1.0].
-- Push samples into a lock-free ring buffer.
+- Capture samples while the hotkey is held.
 
-### Chunking and Buffering
-- Chunk size: 200-500 ms of audio.
-- Sliding window for partial inference.
-- Maintain a short history buffer for context.
+### Buffering
+- Store samples for the duration of the key hold.
+- Optional chunking to avoid excessive memory for long holds.
 
 ### VAD (Voice Activity Detection)
-- Optional VAD to avoid inference on silence.
+- Optional VAD to trim trailing silence after release.
 - Simple energy-based threshold to start; upgradeable later.
-- On silence timeout, finalize current transcript segment.
 
 ### Inference Engine
 - whisper.cpp bound via Rust FFI.
 - Load ggml model at startup.
-- Run inference on each chunk and return partial transcript.
+- Run inference on captured audio and return a final transcript.
 - Use a small quantized model for CPU speed.
 
 ### Output Formatting
-- `plain`: print partial updates inline; print final on utterance end.
-- `jsonl`: emit JSON lines with `type`, `text`, `timestamp`.
+- `plain`: print final transcript after transcription completes.
+- `jsonl`: emit a JSON line with `type`, `text`, `timestamp`.
+
+## Configuration
+- Format: TOML.
+- Example fields: `model`, `language`, `device`, `sample_rate`, `format`, `hotkey`, `vad`.
 
 ## Data Flow
-1. CLI parses flags and loads model.
-2. Audio stream starts and pushes samples to ring buffer.
-3. Chunker pulls samples and optionally applies VAD.
-4. Inference runs on chunk, returns partial text.
-5. Output formatter prints partial or final results.
+1. CLI loads config and model.
+2. Hotkey press starts audio capture.
+3. Audio capture stores samples until key release.
+4. Optional VAD trims trailing silence.
+5. Inference runs on captured audio, returns final text.
+6. Output formatter prints final result.
 
 ## Error Handling
 - Missing model: exit code 2 with message.
@@ -66,8 +66,8 @@ This document describes the technical design for the `sv` CLI that performs offl
 - Stream errors: log and exit gracefully.
 
 ## Validation
-- Manual mic test with `sv --model ./models/ggml-tiny.en.bin`.
-- Validate partial updates and final segmentation.
+- Manual mic test with `sv` using a valid config file.
+- Validate final transcript after key release.
 - Confirm offline operation by disconnecting network.
 
 ## Open Questions
