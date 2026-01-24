@@ -1,6 +1,6 @@
 [tasks.download-model]
-description = "Download the tiny English whisper.cpp model"
-run = "mkdir -p models && curl -L -o models/ggml-tiny.en.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin"
+description = "Download a whisper.cpp English model by size"
+run = "data_dir=${XDG_DATA_HOME:-$HOME/.local/share}/soundvibes/models && mkdir -p \"$data_dir\" && size=${SIZE:-base} && model=ggml-${size}.en.bin && curl -L -o \"$data_dir/${model}\" \"https://huggingface.co/ggerganov/whisper.cpp/resolve/main/${model}\""
 
 [tasks.run-local]
 description = "Run sv with local model"

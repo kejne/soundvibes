@@ -10,20 +10,35 @@ Offline voice-to-text CLI for Linux.
 - Microphone input device
 
 ## Model Setup
-Download a small whisper.cpp ggml model and place it in `./models`.
+Download a whisper.cpp ggml model to the XDG data directory.
 
-Example (tiny English model):
+Example (base English model):
 
 ```bash
-mkdir -p models
-curl -L -o models/ggml-tiny.en.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin
+data_dir="${XDG_DATA_HOME:-$HOME/.local/share}/soundvibes/models"
+mkdir -p "$data_dir"
+curl -L -o "$data_dir/ggml-base.en.bin" https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
 ```
+
+Or use the mise task:
+
+```bash
+mise run download-model
+```
+
+Pick a size via `SIZE` (English models only):
+
+```bash
+SIZE=small mise run download-model
+```
+
+Available sizes: `tiny`, `base`, `small`, `medium`, `large`.
 
 ## Configuration
 Create a config file at `${XDG_CONFIG_HOME:-~/.config}/soundvibes/config.toml`.
 
 ```toml
-model = "/home/you/soundvibes/models/ggml-tiny.en.bin"
+model = "/home/you/.local/share/soundvibes/models/ggml-base.en.bin"
 language = "auto"
 device = "default"
 sample_rate = 16000
@@ -31,6 +46,8 @@ format = "plain"
 hotkey = "ctrl+`"
 vad = false
 ```
+
+If `model` is omitted, `sv` defaults to `${XDG_DATA_HOME:-~/.local/share}/soundvibes/models/ggml-base.en.bin`.
 
 ### Hotkey syntax
 - Use a `+`-separated combo with optional modifiers (`ctrl`, `alt`, `shift`, `super`) and a single key.

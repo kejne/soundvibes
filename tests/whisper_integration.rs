@@ -1,12 +1,22 @@
 use std::error::Error;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use sv::whisper::WhisperContext;
 
 #[test]
 fn transcribes_sample_audio() -> Result<(), Box<dyn Error>> {
-    let model_path =
-        std::env::var("SV_MODEL_PATH").unwrap_or_else(|_| "models/ggml-tiny.en.bin".to_string());
+    let model_path = std::env::var("SV_MODEL_PATH").unwrap_or_else(|_| {
+        let data_home = std::env::var("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .or_else(|_| std::env::var("HOME").map(|home| PathBuf::from(home).join(".local/share")))
+            .unwrap_or_else(|_| PathBuf::from("/tmp"));
+        data_home
+            .join("soundvibes")
+            .join("models")
+            .join("ggml-base.en.bin")
+            .to_string_lossy()
+            .to_string()
+    });
     let model_path = Path::new(&model_path);
     if !model_path.exists() {
         eprintln!(

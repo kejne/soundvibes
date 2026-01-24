@@ -8,6 +8,8 @@ use std::env;
 use std::error::Error;
 use std::fmt;
 use std::fs;
+use std::io::{Read, Write};
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
@@ -53,6 +55,9 @@ struct Cli {
 
     #[arg(long, default_value_t = false)]
     list_devices: bool,
+
+    #[arg(long, default_value_t = false)]
+    daemon: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -70,6 +75,7 @@ struct Config {
     debug_vad: bool,
     list_devices: bool,
     hotkey: String,
+    daemon: bool,
 }
 
 impl Config {
@@ -150,7 +156,8 @@ impl Config {
             cli.model
         } else {
             file.model.or(cli.model)
-        };
+        }
+        .or_else(|| Some(default_model_path()));
 
         Self {
             model_path,
@@ -166,6 +173,7 @@ impl Config {
             debug_vad,
             list_devices,
             hotkey,
+            daemon: cli.daemon,
         }
     }
 }
@@ -222,6 +230,13 @@ struct FileConfig {
 fn main() {
     let matches = Cli::command().get_matches();
     let cli = Cli::from_arg_matches(&matches).expect("Failed to parse CLI arguments");
+    if !cli.daemon && !cli.list_devices {
+        if let Err(err) = send_toggle_command() {
+            eprintln!("error: {err}");
+            process::exit(err.exit_code());
+        }
+        return;
+    }
     let file_config = match load_config_file() {
         Ok(config) => config,
         Err(err) => {
@@ -256,7 +271,15 @@ fn main() {
         println!("Device: {device}");
     }
 
-    if let Err(err) = run_capture(&config) {
+    let result = if config.list_devices {
+        run_capture(&config)
+    } else if config.daemon {
+        run_daemon(&config)
+    } else {
+        run_capture(&config)
+    };
+
+    if let Err(err) = result {
         eprintln!("error: {err}");
         process::exit(err.exit_code());
     }
@@ -364,6 +387,12 @@ struct HotkeyState {
 enum HotkeyEvent {
     Pressed,
     Released,
+    Error(String),
+}
+
+#[derive(Debug)]
+enum ControlEvent {
+    Toggle,
     Error(String),
 }
 
@@ -568,6 +597,17 @@ fn config_path() -> Option<PathBuf> {
     Some(config_home.join("soundvibes").join("config.toml"))
 }
 
+fn default_model_path() -> PathBuf {
+    let data_home = env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))
+        .unwrap_or_else(|| PathBuf::from("/tmp"));
+    data_home
+        .join("soundvibes")
+        .join("models")
+        .join("ggml-base.en.bin")
+}
+
 fn run_capture(config: &Config) -> Result<(), AppError> {
     let host = cpal::default_host();
     audio::configure_alsa_logging(config.debug_audio);
@@ -626,25 +666,7 @@ fn run_capture(config: &Config) -> Result<(), AppError> {
                 if recording {
                     recording = false;
                     audio::drain_samples(&mut capture, &mut buffer);
-                    let trimmed = audio::trim_trailing_silence(&buffer, config.sample_rate, &vad);
-                    if trimmed.is_empty() {
-                        continue;
-                    }
-                    utterance_index += 1;
-                    let duration_ms = audio::samples_to_ms(trimmed.len(), config.sample_rate);
-                    let transcript = context
-                        .transcribe(&trimmed, Some(&config.language))
-                        .map_err(|err| AppError::runtime(err.to_string()))?;
-                    emit_transcript(
-                        config.format,
-                        &transcript,
-                        audio::SegmentInfo {
-                            index: utterance_index,
-                            duration_ms,
-                        },
-                    )
-                    .map_err(AppError::runtime)?;
-                    println!("Ready for next utterance.");
+                    finalize_recording(&context, config, &vad, &buffer, &mut utterance_index)?;
                 }
             }
             Ok(HotkeyEvent::Error(message)) => return Err(AppError::runtime(message)),
@@ -658,6 +680,206 @@ fn run_capture(config: &Config) -> Result<(), AppError> {
             audio::drain_samples(&mut capture, &mut buffer);
         }
     }
+}
+
+fn run_daemon(config: &Config) -> Result<(), AppError> {
+    let socket_path = daemon_socket_path()?;
+    let (_guard, control_events) = start_socket_listener(&socket_path)?;
+    println!("Daemon listening on {}", socket_path.display());
+
+    let host = cpal::default_host();
+    audio::configure_alsa_logging(config.debug_audio);
+    let devices = audio::list_input_devices(&host).map_err(|err| AppError::audio(err.message))?;
+    println!("Input devices:");
+    for name in devices {
+        println!("  - {name}");
+    }
+
+    let model_path = config
+        .model_path
+        .as_ref()
+        .ok_or_else(|| AppError::config("model path is required"))?;
+    let context =
+        WhisperContext::from_file(model_path).map_err(|err| AppError::runtime(err.to_string()))?;
+    let mut capture = audio::start_capture(&host, config.device.as_deref(), config.sample_rate)
+        .map_err(|err| match err.kind {
+            audio::AudioErrorKind::DeviceNotFound if config.device.is_some() => {
+                AppError::config(err.message)
+            }
+            _ => AppError::audio(err.message),
+        })?;
+    let vad = audio::VadConfig::new(
+        config.vad == VadMode::On,
+        config.vad_silence_ms,
+        config.vad_threshold,
+        config.vad_chunk_ms,
+        config.debug_vad,
+    );
+
+    let mut recording = false;
+    let mut buffer = Vec::new();
+    let mut utterance_index = 0u64;
+
+    loop {
+        match control_events.recv_timeout(Duration::from_millis(20)) {
+            Ok(ControlEvent::Toggle) => {
+                if recording {
+                    recording = false;
+                    audio::drain_samples(&mut capture, &mut buffer);
+                    finalize_recording(&context, config, &vad, &buffer, &mut utterance_index)?;
+                } else {
+                    recording = true;
+                    buffer.clear();
+                    audio::discard_samples(&mut capture);
+                    println!("Toggle on. Recording...");
+                }
+            }
+            Ok(ControlEvent::Error(message)) => return Err(AppError::runtime(message)),
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => {
+                return Err(AppError::runtime("socket listener disconnected"));
+            }
+        }
+
+        if recording {
+            audio::drain_samples(&mut capture, &mut buffer);
+        }
+    }
+}
+
+fn finalize_recording(
+    context: &WhisperContext,
+    config: &Config,
+    vad: &audio::VadConfig,
+    buffer: &[f32],
+    utterance_index: &mut u64,
+) -> Result<(), AppError> {
+    let trimmed = audio::trim_trailing_silence(buffer, config.sample_rate, vad);
+    if trimmed.is_empty() {
+        return Ok(());
+    }
+    *utterance_index += 1;
+    let duration_ms = audio::samples_to_ms(trimmed.len(), config.sample_rate);
+    let transcript = context
+        .transcribe(&trimmed, Some(&config.language))
+        .map_err(|err| AppError::runtime(err.to_string()))?;
+    emit_transcript(
+        config.format,
+        &transcript,
+        audio::SegmentInfo {
+            index: *utterance_index,
+            duration_ms,
+        },
+    )
+    .map_err(AppError::runtime)?;
+    println!("Ready for next utterance.");
+    Ok(())
+}
+
+struct SocketGuard {
+    path: PathBuf,
+}
+
+impl Drop for SocketGuard {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+fn daemon_socket_path() -> Result<PathBuf, AppError> {
+    let runtime_dir = env::var_os("XDG_RUNTIME_DIR").ok_or_else(|| {
+        AppError::runtime(
+            "XDG_RUNTIME_DIR is not set; set it to a writable runtime dir (e.g. /run/user/$(id -u))",
+        )
+    })?;
+    Ok(PathBuf::from(runtime_dir)
+        .join("soundvibes")
+        .join("sv.sock"))
+}
+
+fn start_socket_listener(
+    socket_path: &Path,
+) -> Result<(SocketGuard, Receiver<ControlEvent>), AppError> {
+    if let Some(parent) = socket_path.parent() {
+        fs::create_dir_all(parent).map_err(|err| {
+            AppError::runtime(format!(
+                "failed to create socket directory {}: {err}",
+                parent.display()
+            ))
+        })?;
+    }
+
+    if socket_path.exists() {
+        if UnixStream::connect(socket_path).is_ok() {
+            return Err(AppError::runtime(
+                "daemon already running; use `sv` to toggle capture",
+            ));
+        }
+        fs::remove_file(socket_path).map_err(|err| {
+            AppError::runtime(format!(
+                "failed to remove stale daemon socket {}: {err}",
+                socket_path.display()
+            ))
+        })?;
+    }
+
+    let listener = UnixListener::bind(socket_path).map_err(|err| {
+        AppError::runtime(format!(
+            "failed to bind daemon socket {}: {err}",
+            socket_path.display()
+        ))
+    })?;
+    let guard = SocketGuard {
+        path: socket_path.to_path_buf(),
+    };
+    let (sender, receiver) = mpsc::channel();
+
+    thread::spawn(move || {
+        for stream in listener.incoming() {
+            match stream {
+                Ok(mut stream) => {
+                    let mut buffer = String::new();
+                    if let Err(err) = stream.read_to_string(&mut buffer) {
+                        eprintln!("socket read error: {err}");
+                        continue;
+                    }
+                    let command = buffer.trim();
+                    if command.is_empty() || command == "toggle" {
+                        let _ = sender.send(ControlEvent::Toggle);
+                    } else {
+                        eprintln!("unsupported daemon command: {command}");
+                    }
+                }
+                Err(err) => {
+                    let _ =
+                        sender.send(ControlEvent::Error(format!("socket listener error: {err}")));
+                    break;
+                }
+            }
+        }
+    });
+
+    Ok((guard, receiver))
+}
+
+fn send_toggle_command() -> Result<(), AppError> {
+    let socket_path = daemon_socket_path()?;
+    if !socket_path.exists() {
+        return Err(AppError::runtime(format!(
+            "daemon socket not found at {}. Start it with `sv --daemon`",
+            socket_path.display()
+        )));
+    }
+    let mut stream = UnixStream::connect(&socket_path).map_err(|err| {
+        AppError::runtime(format!(
+            "failed to connect to daemon socket {}: {err}",
+            socket_path.display()
+        ))
+    })?;
+    stream
+        .write_all(b"toggle\n")
+        .map_err(|err| AppError::runtime(format!("failed to send toggle: {err}")))?;
+    Ok(())
 }
 
 fn emit_transcript(
@@ -703,4 +925,82 @@ fn validate_model_path(path: &Path) -> Result<(), AppError> {
         )));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &Path) -> Self {
+            let previous = env::var_os(key);
+            env::set_var(key, value);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => env::set_var(self.key, value),
+                None => env::remove_var(self.key),
+            }
+        }
+    }
+
+    fn lock_tests() -> std::sync::MutexGuard<'static, ()> {
+        TEST_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("test lock poisoned")
+    }
+
+    fn temp_runtime_dir() -> PathBuf {
+        let mut dir = env::temp_dir();
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        dir.push(format!("soundvibes-test-{}-{stamp}", process::id()));
+        dir
+    }
+
+    #[test]
+    fn toggle_command_reaches_daemon_socket() -> Result<(), AppError> {
+        let _lock = lock_tests();
+        let runtime_dir = temp_runtime_dir();
+        fs::create_dir_all(&runtime_dir).map_err(|err| {
+            AppError::runtime(format!("failed to create test runtime dir: {err}"))
+        })?;
+        let _guard = EnvGuard::set("XDG_RUNTIME_DIR", &runtime_dir);
+        let socket_path = daemon_socket_path()?;
+        let (_socket_guard, control_events) = start_socket_listener(&socket_path)?;
+
+        send_toggle_command()?;
+
+        match control_events.recv_timeout(Duration::from_secs(1)) {
+            Ok(ControlEvent::Toggle) => Ok(()),
+            Ok(ControlEvent::Error(message)) => Err(AppError::runtime(message)),
+            Err(_) => Err(AppError::runtime("toggle command not received")),
+        }
+    }
+
+    #[test]
+    fn toggle_command_errors_when_socket_missing() {
+        let _lock = lock_tests();
+        let runtime_dir = temp_runtime_dir();
+        fs::create_dir_all(&runtime_dir).expect("failed to create test runtime dir");
+        let _guard = EnvGuard::set("XDG_RUNTIME_DIR", &runtime_dir);
+
+        let err = send_toggle_command().expect_err("expected socket error");
+        assert!(err.to_string().contains("daemon socket not found"));
+    }
 }
