@@ -4,7 +4,7 @@ run = "data_dir=${XDG_DATA_HOME:-$HOME/.local/share}/soundvibes/models && mkdir 
 
 [tasks.run-local]
 description = "Run sv with local model"
-run = "cargo run -- --model ./models/ggml-tiny.en.bin"
+run = "cargo run --"
 
 [tasks.debug-local]
 description = "Run sv with local model"
