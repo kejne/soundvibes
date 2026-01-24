@@ -1,6 +1,8 @@
 mod audio;
 
 use clap::{Parser, ValueEnum};
+use std::error::Error;
+use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process;
 use sv::whisper::WhisperContext;
@@ -98,9 +100,9 @@ fn main() {
 
     if !config.list_devices {
         if let Some(model_path) = &config.model_path {
-            if let Err(message) = validate_model_path(model_path) {
-                eprintln!("error: {message}");
-                process::exit(2);
+            if let Err(err) = validate_model_path(model_path) {
+                eprintln!("error: {err}");
+                process::exit(err.exit_code());
             }
         }
     }
@@ -120,16 +122,68 @@ fn main() {
         println!("Device: {device}");
     }
 
-    if let Err(message) = run_capture(&config) {
-        eprintln!("error: {message}");
-        process::exit(1);
+    if let Err(err) = run_capture(&config) {
+        eprintln!("error: {err}");
+        process::exit(err.exit_code());
     }
 }
 
-fn run_capture(config: &Config) -> Result<(), String> {
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+enum AppErrorKind {
+    Config,
+    Audio,
+    Runtime,
+}
+
+#[derive(Debug)]
+struct AppError {
+    kind: AppErrorKind,
+    message: String,
+}
+
+impl AppError {
+    fn config(message: impl Into<String>) -> Self {
+        Self {
+            kind: AppErrorKind::Config,
+            message: message.into(),
+        }
+    }
+
+    fn audio(message: impl Into<String>) -> Self {
+        Self {
+            kind: AppErrorKind::Audio,
+            message: message.into(),
+        }
+    }
+
+    fn runtime(message: impl Into<String>) -> Self {
+        Self {
+            kind: AppErrorKind::Runtime,
+            message: message.into(),
+        }
+    }
+
+    fn exit_code(&self) -> i32 {
+        match self.kind {
+            AppErrorKind::Config => 2,
+            AppErrorKind::Audio => 3,
+            AppErrorKind::Runtime => 1,
+        }
+    }
+}
+
+impl fmt::Display for AppError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl Error for AppError {}
+
+fn run_capture(config: &Config) -> Result<(), AppError> {
     let host = cpal::default_host();
     audio::configure_alsa_logging(config.debug_audio);
-    let devices = audio::list_input_devices(&host)?;
+    let devices = audio::list_input_devices(&host).map_err(|err| AppError::audio(err.message))?;
     println!("Input devices:");
     for name in devices {
         println!("  - {name}");
@@ -142,9 +196,16 @@ fn run_capture(config: &Config) -> Result<(), String> {
     let model_path = config
         .model_path
         .as_ref()
-        .ok_or_else(|| "model path is required".to_string())?;
-    let context = WhisperContext::from_file(model_path).map_err(|err| err.to_string())?;
-    let capture = audio::start_capture(&host, config.device.as_deref(), config.sample_rate)?;
+        .ok_or_else(|| AppError::config("model path is required"))?;
+    let context =
+        WhisperContext::from_file(model_path).map_err(|err| AppError::runtime(err.to_string()))?;
+    let capture = audio::start_capture(&host, config.device.as_deref(), config.sample_rate)
+        .map_err(|err| match err.kind {
+            audio::AudioErrorKind::DeviceNotFound if config.device.is_some() => {
+                AppError::config(err.message)
+            }
+            _ => AppError::audio(err.message),
+        })?;
     let vad = audio::VadConfig::new(
         config.vad == VadMode::On,
         config.vad_silence_ms,
@@ -156,9 +217,10 @@ fn run_capture(config: &Config) -> Result<(), String> {
     audio::stream_segments(capture, config.sample_rate, vad, |samples, info| {
         let transcript = context
             .transcribe(samples, Some(&config.language))
-            .map_err(|err| err.to_string())?;
+            .map_err(|err| AppError::runtime(err.to_string()))?;
         emit_transcript(config.format, &transcript, info)
-    })?;
+    })
+    .map_err(|err| AppError::runtime(err))?;
     Ok(())
 }
 
@@ -166,7 +228,7 @@ fn emit_transcript(
     format: OutputFormat,
     text: &str,
     info: audio::SegmentInfo,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     match format {
         OutputFormat::Plain => {
             println!("Transcript {}: {}", info.index, text);
@@ -191,12 +253,18 @@ fn json_escape(value: &str) -> String {
         .replace('\t', "\\t")
 }
 
-fn validate_model_path(path: &Path) -> Result<(), String> {
+fn validate_model_path(path: &Path) -> Result<(), AppError> {
     if !path.exists() {
-        return Err(format!("model file not found at {}", path.display()));
+        return Err(AppError::config(format!(
+            "model file not found at {}",
+            path.display()
+        )));
     }
     if !path.is_file() {
-        return Err(format!("model path is not a file: {}", path.display()));
+        return Err(AppError::config(format!(
+            "model path is not a file: {}",
+            path.display()
+        )));
     }
     Ok(())
 }

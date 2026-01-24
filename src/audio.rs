@@ -1,5 +1,7 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use ringbuf::{HeapConsumer, HeapProducer, HeapRb};
+use std::error::Error;
+use std::fmt;
 use std::time::Duration;
 
 pub struct Capture {
@@ -25,6 +27,39 @@ pub struct SegmentInfo {
     pub duration_ms: u64,
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum AudioErrorKind {
+    DeviceNotFound,
+    DeviceUnavailable,
+    DeviceQuery,
+    StreamConfig,
+    StreamBuild,
+    StreamStart,
+}
+
+#[derive(Debug)]
+pub struct AudioError {
+    pub kind: AudioErrorKind,
+    pub message: String,
+}
+
+impl AudioError {
+    fn new(kind: AudioErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for AudioError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl Error for AudioError {}
+
 impl VadConfig {
     pub fn new(
         enabled: bool,
@@ -43,21 +78,30 @@ impl VadConfig {
     }
 }
 
-pub fn list_input_devices(host: &cpal::Host) -> Result<Vec<String>, String> {
-    let devices = host
-        .input_devices()
-        .map_err(|err| format!("failed to list input devices: {err}"))?;
+pub fn list_input_devices(host: &cpal::Host) -> Result<Vec<String>, AudioError> {
+    let devices = host.input_devices().map_err(|err| {
+        AudioError::new(
+            AudioErrorKind::DeviceQuery,
+            format!("failed to list input devices: {err}"),
+        )
+    })?;
 
     let mut names = Vec::new();
     for device in devices {
-        let name = device
-            .name()
-            .map_err(|err| format!("failed to read device name: {err}"))?;
+        let name = device.name().map_err(|err| {
+            AudioError::new(
+                AudioErrorKind::DeviceQuery,
+                format!("failed to read device name: {err}"),
+            )
+        })?;
         names.push(name);
     }
 
     if names.is_empty() {
-        return Err("no input devices available".to_string());
+        return Err(AudioError::new(
+            AudioErrorKind::DeviceUnavailable,
+            "no input devices available",
+        ));
     }
 
     Ok(names)
@@ -103,11 +147,14 @@ pub fn start_capture(
     host: &cpal::Host,
     device_name: Option<&str>,
     sample_rate: u32,
-) -> Result<Capture, String> {
+) -> Result<Capture, AudioError> {
     let device = select_input_device(host, device_name)?;
-    let device_label = device
-        .name()
-        .map_err(|err| format!("failed to read input device name: {err}"))?;
+    let device_label = device.name().map_err(|err| {
+        AudioError::new(
+            AudioErrorKind::DeviceQuery,
+            format!("failed to read input device name: {err}"),
+        )
+    })?;
     println!("Selected input device: {device_label}");
 
     let (stream_config, sample_format) = select_stream_config(&device, sample_rate)?;
@@ -125,13 +172,19 @@ pub fn start_capture(
         cpal::SampleFormat::U16 => build_input_stream::<u16>(&device, &stream_config, producer)?,
         cpal::SampleFormat::U32 => build_input_stream::<u32>(&device, &stream_config, producer)?,
         format => {
-            return Err(format!("unsupported sample format: {format:?}"));
+            return Err(AudioError::new(
+                AudioErrorKind::StreamConfig,
+                format!("unsupported sample format: {format:?}"),
+            ));
         }
     };
 
-    stream
-        .play()
-        .map_err(|err| format!("failed to start input stream: {err}"))?;
+    stream.play().map_err(|err| {
+        AudioError::new(
+            AudioErrorKind::StreamStart,
+            format!("failed to start input stream: {err}"),
+        )
+    })?;
 
     Ok(Capture {
         _stream: stream,
@@ -244,36 +297,52 @@ fn samples_to_ms(samples: usize, sample_rate: u32) -> u64 {
     ((samples as f32 / sample_rate as f32) * 1000.0).round() as u64
 }
 
-fn select_input_device(host: &cpal::Host, name: Option<&str>) -> Result<cpal::Device, String> {
+fn select_input_device(host: &cpal::Host, name: Option<&str>) -> Result<cpal::Device, AudioError> {
     if let Some(target) = name {
         let target_lower = target.to_lowercase();
-        let devices = host
-            .input_devices()
-            .map_err(|err| format!("failed to list input devices: {err}"))?;
+        let devices = host.input_devices().map_err(|err| {
+            AudioError::new(
+                AudioErrorKind::DeviceQuery,
+                format!("failed to list input devices: {err}"),
+            )
+        })?;
 
         for device in devices {
-            let device_name = device
-                .name()
-                .map_err(|err| format!("failed to read device name: {err}"))?;
+            let device_name = device.name().map_err(|err| {
+                AudioError::new(
+                    AudioErrorKind::DeviceQuery,
+                    format!("failed to read device name: {err}"),
+                )
+            })?;
             if device_name.to_lowercase() == target_lower {
                 return Ok(device);
             }
         }
 
-        return Err(format!("input device not found: {target}"));
+        return Err(AudioError::new(
+            AudioErrorKind::DeviceNotFound,
+            format!("input device not found: {target}"),
+        ));
     }
 
-    host.default_input_device()
-        .ok_or_else(|| "no default input device available".to_string())
+    host.default_input_device().ok_or_else(|| {
+        AudioError::new(
+            AudioErrorKind::DeviceUnavailable,
+            "no default input device available",
+        )
+    })
 }
 
 fn select_stream_config(
     device: &cpal::Device,
     sample_rate: u32,
-) -> Result<(cpal::StreamConfig, cpal::SampleFormat), String> {
-    let configs = device
-        .supported_input_configs()
-        .map_err(|err| format!("failed to query input configs: {err}"))?;
+) -> Result<(cpal::StreamConfig, cpal::SampleFormat), AudioError> {
+    let configs = device.supported_input_configs().map_err(|err| {
+        AudioError::new(
+            AudioErrorKind::StreamConfig,
+            format!("failed to query input configs: {err}"),
+        )
+    })?;
 
     let mut best: Option<(cpal::StreamConfig, cpal::SampleFormat)> = None;
     for config in configs {
@@ -300,14 +369,19 @@ fn select_stream_config(
         }
     }
 
-    best.ok_or_else(|| format!("no input config supports {sample_rate} Hz"))
+    best.ok_or_else(|| {
+        AudioError::new(
+            AudioErrorKind::StreamConfig,
+            format!("no input config supports {sample_rate} Hz"),
+        )
+    })
 }
 
 fn build_input_stream<T>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
     mut producer: HeapProducer<f32>,
-) -> Result<cpal::Stream, String>
+) -> Result<cpal::Stream, AudioError>
 where
     T: cpal::Sample + cpal::SizedSample,
     f32: cpal::FromSample<T>,
@@ -340,5 +414,10 @@ where
             },
             None,
         )
-        .map_err(|err| format!("failed to build input stream: {err}"))
+        .map_err(|err| {
+            AudioError::new(
+                AudioErrorKind::StreamBuild,
+                format!("failed to build input stream: {err}"),
+            )
+        })
 }
