@@ -1,18 +1,18 @@
 # Technical Design: Offline STT CLI (sv)
 
 ## Overview
-This document describes the technical design for the `sv` CLI that performs offline, push-to-talk speech-to-text on Linux using whisper.cpp with a small quantized model.
+This document describes the technical design for the `sv` CLI that performs offline, start/stop speech-to-text on Linux using whisper.cpp with a small quantized model.
 
 ## Goals
 - Single binary plus local model file.
-- Push-to-talk capture with transcription on key release.
+- Start/stop capture with transcription after capture stops.
 - Best-effort latency on CPU.
 - Support daemon mode with socket-based control and text injection at the cursor.
 
 ## Architecture
 - CLI entrypoint loads configuration.
 - Command listener controls capture start/stop.
-- Audio capture pipeline reads microphone input via `cpal` while key is held.
+- Audio capture pipeline reads microphone input via `cpal` while recording is toggled on.
 - A buffer aggregates audio frames for post-recording inference.
 - Optional VAD trims trailing silence after release.
 - whisper.cpp runs inference on the captured buffer.
@@ -31,17 +31,16 @@ This document describes the technical design for the `sv` CLI that performs offl
 ### Audio Capture
 - Use `cpal` to select input device and stream 16 kHz mono.
 - Convert samples to `f32` normalized range [-1.0, 1.0].
-- Capture samples while the hotkey is held.
+- Capture samples while recording is toggled on.
 
 ### Buffering
-- Store samples for the duration of the key hold.
+- Store samples for the duration of the recording window.
 - Optional chunking to avoid excessive memory for long holds.
 
 ### VAD (Voice Activity Detection)
 - Optional VAD to trim trailing silence after release.
 - Simple energy-based threshold to start; upgradeable later.
 
-### Hotkey Capture
 ### Command Control
 - Run `sv --daemon` to start the background service.
 - Run `sv` to send a toggle command to the daemon over a Unix socket.
@@ -72,7 +71,7 @@ This document describes the technical design for the `sv` CLI that performs offl
 
 ## Configuration
 - Format: TOML.
-- Example fields: `model`, `language`, `device`, `sample_rate`, `format`, `hotkey`, `vad`, `mode`.
+- Example fields: `model`, `language`, `device`, `sample_rate`, `format`, `vad`, `mode`.
 
 ## Data Flow
 1. CLI loads config and model.
@@ -90,7 +89,7 @@ This document describes the technical design for the `sv` CLI that performs offl
 
 ## Validation
 - Manual mic test with `sv` using a valid config file.
-- Validate final transcript after key release.
+- Validate final transcript after capture stops.
 - Confirm offline operation by disconnecting network.
 - Validate socket toggle commands against the daemon.
 - Validate injection into a focused editor.

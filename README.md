@@ -3,7 +3,7 @@
 Offline voice-to-text CLI for Linux.
 
 ## Overview
-`sv` captures audio from your microphone using push-to-talk and runs offline speech-to-text with a small whisper.cpp model. It aims for minimal runtime dependencies and ships as a single binary plus a local model file.
+`sv` captures audio from your microphone using start/stop toggles and runs offline speech-to-text with a small whisper.cpp model. It aims for minimal runtime dependencies and ships as a single binary plus a local model file.
 
 ## Requirements
 - Linux x86_64
@@ -43,28 +43,24 @@ language = "auto"
 device = "default"
 sample_rate = 16000
 format = "plain"
-hotkey = "ctrl+`"
 vad = false
 ```
 
 If `model` is omitted, `sv` defaults to `${XDG_DATA_HOME:-~/.local/share}/soundvibes/models/ggml-base.en.bin`.
 
-### Hotkey syntax
-- Use a `+`-separated combo with optional modifiers (`ctrl`, `alt`, `shift`, `super`) and a single key.
-- Modifiers are case-insensitive and can be combined (example: `ctrl+shift+space`).
-- For the super modifier, use `super`, `meta`, `win`, or `cmd`.
-- Supported keys include letters (`a`-`z`), digits (`0`-`9`), `space`, `tab`, `enter`, `esc`, function keys (`f1`-`f12`), and the backtick key.
-- Special characters must be quoted in TOML, so wrap combos like `ctrl+`` in double quotes.
-- For the backtick key, use `` ` `` in the combo (example: `hotkey = "ctrl+`"`).
-- Literal symbol keys are matched by character, so use the exact printable character in the combo.
-
 ## Usage
+```bash
+sv --daemon
+```
+
+In another terminal:
+
 ```bash
 sv
 ```
 
 ## Output Formats
-- `plain` (default): prints the final transcript after key release.
+- `plain` (default): prints the final transcript after capture stops.
 - `jsonl`: emits JSON lines with `type`, `text`, `timestamp`.
 
 ## Documentation

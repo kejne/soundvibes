@@ -1,10 +1,10 @@
 # PRD: Offline Voice-to-Text CLI (Linux)
 
 ## Problem
-Linux users need a simple, offline push-to-talk voice-to-text tool that does not require installing heavy runtimes or managing complex dependencies.
+Linux users need a simple, offline start/stop voice-to-text tool that does not require installing heavy runtimes or managing complex dependencies.
 
 ## Goals
-- Provide push-to-talk recording from the default microphone with transcription on key release.
+- Provide start/stop recording from the default microphone with transcription after capture stops.
 - Work fully offline with a small model and fast post-recording transcription.
 - Run as a background daemon that listens for control commands over a local socket.
 - Use the same binary: `sv --daemon` runs the service, `sv` toggles capture via the socket.
@@ -16,7 +16,7 @@ Linux users need a simple, offline push-to-talk voice-to-text tool that does not
 
 ## Scope (MVP)
 - CLI that captures audio from the default input device.
-- Push-to-talk recording: hold a key to record, transcribe and print on release.
+- Start/stop recording: capture audio while toggled on, transcribe and print when stopped.
 - Small offline model (whisper.cpp tiny/base with quantization).
 - Configuration via `config.toml` in the XDG config directory.
 - Works on Linux x86_64.
@@ -37,10 +37,10 @@ Linux users need a simple, offline push-to-talk voice-to-text tool that does not
 - Configure model and options in the config file, then run the daemon.
 - When capture is toggled on, start recording; when toggled off, transcribe and output.
 - Errors are returned with actionable messages (missing model, no mic, unsupported device).
-- In daemon mode, the capture key injects text into the focused app instead of stdout.
+- In daemon mode, the capture toggle injects text into the focused app instead of stdout.
 
 ## Output Behavior
-- One final transcript emitted on key release.
+- One final transcript emitted after capture stops.
 - JSONL mode emits objects with `type`, `text`, `timestamp`.
 
 ## Exit Codes
@@ -64,7 +64,7 @@ Linux users need a simple, offline push-to-talk voice-to-text tool that does not
 
 ## Performance Assumptions
 - Best-effort latency on CPU for a small model.
-- Acceptable transcription time after key release.
+- Acceptable transcription time after capture stops.
 - No hard latency SLA in MVP.
 
 ## Packaging & Distribution
@@ -76,7 +76,7 @@ Linux users need a simple, offline push-to-talk voice-to-text tool that does not
 - Load config from XDG base directory if available.
 - Default path: `${XDG_CONFIG_HOME:-~/.config}/soundvibes/config.toml`.
 - Config file format: TOML.
-- Config keys: `model`, `language`, `device`, `sample_rate`, `format`, `hotkey`, `vad`, `mode`.
+- Config keys: `model`, `language`, `device`, `sample_rate`, `format`, `vad`, `mode`.
 
 ## Validation Plan
 - Manual test on Linux laptop with default microphone.
