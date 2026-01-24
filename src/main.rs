@@ -1,7 +1,9 @@
 mod audio;
 
+use chrono::Local;
 use clap::parser::ValueSource;
 use clap::{CommandFactory, FromArgMatches, Parser, ValueEnum};
+use hound::WavSpec;
 use rdev::{EventType, Key};
 use serde::Deserialize;
 use std::env;
@@ -28,6 +30,9 @@ struct Cli {
 
     #[arg(long, value_name = "NAME")]
     device: Option<String>,
+
+    #[arg(long, value_name = "HOST")]
+    audio_host: Option<AudioHost>,
 
     #[arg(long, default_value_t = 16_000, value_name = "HZ")]
     sample_rate: u32,
@@ -57,6 +62,9 @@ struct Cli {
     list_devices: bool,
 
     #[arg(long, default_value_t = false)]
+    dump_audio: bool,
+
+    #[arg(long, default_value_t = false)]
     daemon: bool,
 }
 
@@ -65,6 +73,7 @@ struct Config {
     model_path: Option<PathBuf>,
     language: String,
     device: Option<String>,
+    audio_host: AudioHost,
     sample_rate: u32,
     format: OutputFormat,
     vad: VadMode,
@@ -74,6 +83,7 @@ struct Config {
     debug_audio: bool,
     debug_vad: bool,
     list_devices: bool,
+    dump_audio: bool,
     hotkey: String,
     daemon: bool,
 }
@@ -90,6 +100,15 @@ impl Config {
             cli.device
         } else {
             cli.device.or(file.device)
+        };
+
+        let audio_host = if matches.value_source("audio_host") == Some(ValueSource::CommandLine) {
+            cli.audio_host
+                .unwrap_or_else(AudioHost::default_for_platform)
+        } else {
+            file.audio_host
+                .or(cli.audio_host)
+                .unwrap_or_else(AudioHost::default_for_platform)
         };
 
         let sample_rate = if matches.value_source("sample_rate") == Some(ValueSource::CommandLine) {
@@ -150,6 +169,12 @@ impl Config {
             file.list_devices.unwrap_or(cli.list_devices)
         };
 
+        let dump_audio = if matches.value_source("dump_audio") == Some(ValueSource::CommandLine) {
+            cli.dump_audio
+        } else {
+            file.dump_audio.unwrap_or(cli.dump_audio)
+        };
+
         let hotkey = file.hotkey.unwrap_or_else(|| "ctrl+`".to_string());
 
         let model_path = if matches.value_source("model") == Some(ValueSource::CommandLine) {
@@ -163,6 +188,7 @@ impl Config {
             model_path,
             language,
             device,
+            audio_host,
             sample_rate,
             format,
             vad,
@@ -172,6 +198,7 @@ impl Config {
             debug_audio,
             debug_vad,
             list_devices,
+            dump_audio,
             hotkey,
             daemon: cli.daemon,
         }
@@ -183,6 +210,26 @@ impl Config {
 enum OutputFormat {
     Plain,
     Jsonl,
+}
+
+#[derive(Debug, Copy, Clone, ValueEnum, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum AudioHost {
+    Default,
+    Alsa,
+}
+
+impl AudioHost {
+    fn default_for_platform() -> Self {
+        #[cfg(target_os = "linux")]
+        {
+            return AudioHost::Alsa;
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            AudioHost::Default
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, ValueEnum, Deserialize)]
@@ -215,6 +262,7 @@ struct FileConfig {
     model: Option<PathBuf>,
     language: Option<String>,
     device: Option<String>,
+    audio_host: Option<AudioHost>,
     sample_rate: Option<u32>,
     format: Option<OutputFormat>,
     vad: Option<VadSetting>,
@@ -224,6 +272,7 @@ struct FileConfig {
     debug_audio: Option<bool>,
     debug_vad: Option<bool>,
     list_devices: Option<bool>,
+    dump_audio: Option<bool>,
     hotkey: Option<String>,
 }
 
@@ -267,6 +316,8 @@ fn main() {
     println!("VAD threshold: {:.4}", config.vad_threshold);
     println!("VAD chunk: {} ms", config.vad_chunk_ms);
     println!("Hotkey: {}", config.hotkey);
+    println!("Dump audio: {}", config.dump_audio);
+    println!("Audio host: {:?}", config.audio_host);
     if let Some(device) = &config.device {
         println!("Device: {device}");
     }
@@ -608,8 +659,32 @@ fn default_model_path() -> PathBuf {
         .join("ggml-base.en.bin")
 }
 
+fn select_audio_host(audio_host: AudioHost) -> Result<cpal::Host, AppError> {
+    match audio_host {
+        AudioHost::Default => Ok(cpal::default_host()),
+        _ => {
+            let host_id = match audio_host {
+                AudioHost::Alsa => cpal::HostId::Alsa,
+                AudioHost::Default => cpal::HostId::Alsa,
+            };
+            if !cpal::available_hosts().contains(&host_id) {
+                let available = cpal::available_hosts()
+                    .into_iter()
+                    .map(|host| format!("{host:?}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return Err(AppError::config(format!(
+                    "audio host {audio_host:?} not available (available: {available})"
+                )));
+            }
+            cpal::host_from_id(host_id)
+                .map_err(|err| AppError::runtime(format!("failed to init audio host: {err}")))
+        }
+    }
+}
+
 fn run_capture(config: &Config) -> Result<(), AppError> {
-    let host = cpal::default_host();
+    let host = select_audio_host(config.audio_host)?;
     audio::configure_alsa_logging(config.debug_audio);
     let devices = audio::list_input_devices(&host).map_err(|err| AppError::audio(err.message))?;
     println!("Input devices:");
@@ -687,7 +762,7 @@ fn run_daemon(config: &Config) -> Result<(), AppError> {
     let (_guard, control_events) = start_socket_listener(&socket_path)?;
     println!("Daemon listening on {}", socket_path.display());
 
-    let host = cpal::default_host();
+    let host = select_audio_host(config.audio_host)?;
     audio::configure_alsa_logging(config.debug_audio);
     let devices = audio::list_input_devices(&host).map_err(|err| AppError::audio(err.message))?;
     println!("Input devices:");
@@ -760,6 +835,9 @@ fn finalize_recording(
     }
     *utterance_index += 1;
     let duration_ms = audio::samples_to_ms(trimmed.len(), config.sample_rate);
+    if config.dump_audio {
+        dump_audio_samples(&trimmed, config.sample_rate)?;
+    }
     let transcript = context
         .transcribe(&trimmed, Some(&config.language))
         .map_err(|err| AppError::runtime(err.to_string()))?;
@@ -909,6 +987,34 @@ fn json_escape(value: &str) -> String {
         .replace('\n', "\\n")
         .replace('\r', "\\r")
         .replace('\t', "\\t")
+}
+
+fn dump_audio_samples(samples: &[f32], sample_rate: u32) -> Result<PathBuf, AppError> {
+    let output_dir = env::current_dir()
+        .map_err(|err| AppError::runtime(format!("failed to read current dir: {err}")))?;
+    let timestamp = Local::now().format("%Y%m%d_%H%M%S").to_string();
+    let filename = format!("sv_{timestamp}.wav");
+    let path = output_dir.join(filename);
+    let spec = WavSpec {
+        channels: 1,
+        sample_rate,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut writer = hound::WavWriter::create(&path, spec)
+        .map_err(|err| AppError::runtime(format!("failed to create wav file: {err}")))?;
+    for sample in samples {
+        let clipped = sample.clamp(-1.0, 1.0);
+        let value = (clipped * i16::MAX as f32) as i16;
+        writer
+            .write_sample(value)
+            .map_err(|err| AppError::runtime(format!("failed to write wav data: {err}")))?;
+    }
+    writer
+        .finalize()
+        .map_err(|err| AppError::runtime(format!("failed to finalize wav: {err}")))?;
+    println!("Saved audio: {}", path.display());
+    Ok(path)
 }
 
 fn validate_model_path(path: &Path) -> Result<(), AppError> {

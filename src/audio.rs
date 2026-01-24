@@ -159,6 +159,10 @@ pub fn start_capture(
     println!("Selected input device: {device_label}");
 
     let (stream_config, sample_format) = select_stream_config(&device, sample_rate)?;
+    println!(
+        "Input stream: {:?}, {} ch, {} Hz",
+        sample_format, stream_config.channels, stream_config.sample_rate.0
+    );
 
     let ring = HeapRb::<f32>::new(sample_rate as usize * 5);
     let (producer, consumer) = ring.split();
