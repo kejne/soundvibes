@@ -1,8 +1,12 @@
 mod audio;
 
-use clap::{Parser, ValueEnum};
+use clap::parser::ValueSource;
+use clap::{CommandFactory, FromArgMatches, Parser, ValueEnum};
+use serde::Deserialize;
+use std::env;
 use std::error::Error;
 use std::fmt;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process;
 use sv::whisper::WhisperContext;
@@ -10,7 +14,7 @@ use sv::whisper::WhisperContext;
 #[derive(Parser, Debug)]
 #[command(name = "sv", version, about = "Offline speech-to-text CLI")]
 struct Cli {
-    #[arg(long, value_name = "PATH", required_unless_present = "list_devices")]
+    #[arg(long, value_name = "PATH")]
     model: Option<PathBuf>,
 
     #[arg(long, default_value = "en", value_name = "CODE")]
@@ -64,39 +68,142 @@ struct Config {
 }
 
 impl Config {
-    fn from_cli(cli: Cli) -> Self {
+    fn from_sources(cli: Cli, matches: &clap::ArgMatches, file: FileConfig) -> Self {
+        let language = if matches.value_source("language") == Some(ValueSource::CommandLine) {
+            cli.language
+        } else {
+            file.language.unwrap_or(cli.language)
+        };
+
+        let device = if matches.value_source("device") == Some(ValueSource::CommandLine) {
+            cli.device
+        } else {
+            cli.device.or(file.device)
+        };
+
+        let sample_rate = if matches.value_source("sample_rate") == Some(ValueSource::CommandLine) {
+            cli.sample_rate
+        } else {
+            file.sample_rate.unwrap_or(cli.sample_rate)
+        };
+
+        let format = if matches.value_source("format") == Some(ValueSource::CommandLine) {
+            cli.format
+        } else {
+            file.format.unwrap_or(cli.format)
+        };
+
+        let vad = if matches.value_source("vad") == Some(ValueSource::CommandLine) {
+            cli.vad
+        } else {
+            file.vad.unwrap_or(cli.vad)
+        };
+
+        let vad_silence_ms =
+            if matches.value_source("vad_silence_ms") == Some(ValueSource::CommandLine) {
+                cli.vad_silence_ms
+            } else {
+                file.vad_silence_ms.unwrap_or(cli.vad_silence_ms)
+            };
+
+        let vad_threshold =
+            if matches.value_source("vad_threshold") == Some(ValueSource::CommandLine) {
+                cli.vad_threshold
+            } else {
+                file.vad_threshold.unwrap_or(cli.vad_threshold)
+            };
+
+        let vad_chunk_ms = if matches.value_source("vad_chunk_ms") == Some(ValueSource::CommandLine)
+        {
+            cli.vad_chunk_ms
+        } else {
+            file.vad_chunk_ms.unwrap_or(cli.vad_chunk_ms)
+        };
+
+        let debug_audio = if matches.value_source("debug_audio") == Some(ValueSource::CommandLine) {
+            cli.debug_audio
+        } else {
+            file.debug_audio.unwrap_or(cli.debug_audio)
+        };
+
+        let debug_vad = if matches.value_source("debug_vad") == Some(ValueSource::CommandLine) {
+            cli.debug_vad
+        } else {
+            file.debug_vad.unwrap_or(cli.debug_vad)
+        };
+
+        let list_devices = if matches.value_source("list_devices") == Some(ValueSource::CommandLine)
+        {
+            cli.list_devices
+        } else {
+            file.list_devices.unwrap_or(cli.list_devices)
+        };
+
+        let model_path = if matches.value_source("model") == Some(ValueSource::CommandLine) {
+            cli.model
+        } else {
+            file.model.or(cli.model)
+        };
+
         Self {
-            model_path: cli.model,
-            language: cli.language,
-            device: cli.device,
-            sample_rate: cli.sample_rate,
-            format: cli.format,
-            vad: cli.vad,
-            vad_silence_ms: cli.vad_silence_ms,
-            vad_threshold: cli.vad_threshold,
-            vad_chunk_ms: cli.vad_chunk_ms,
-            debug_audio: cli.debug_audio,
-            debug_vad: cli.debug_vad,
-            list_devices: cli.list_devices,
+            model_path,
+            language,
+            device,
+            sample_rate,
+            format,
+            vad,
+            vad_silence_ms,
+            vad_threshold,
+            vad_chunk_ms,
+            debug_audio,
+            debug_vad,
+            list_devices,
         }
     }
 }
 
-#[derive(Debug, Copy, Clone, ValueEnum)]
+#[derive(Debug, Copy, Clone, ValueEnum, Deserialize)]
+#[serde(rename_all = "lowercase")]
 enum OutputFormat {
     Plain,
     Jsonl,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, ValueEnum, Deserialize)]
+#[serde(rename_all = "lowercase")]
 enum VadMode {
     On,
     Off,
 }
 
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct FileConfig {
+    model: Option<PathBuf>,
+    language: Option<String>,
+    device: Option<String>,
+    sample_rate: Option<u32>,
+    format: Option<OutputFormat>,
+    vad: Option<VadMode>,
+    vad_silence_ms: Option<u64>,
+    vad_threshold: Option<f32>,
+    vad_chunk_ms: Option<u64>,
+    debug_audio: Option<bool>,
+    debug_vad: Option<bool>,
+    list_devices: Option<bool>,
+}
+
 fn main() {
-    let cli = Cli::parse();
-    let config = Config::from_cli(cli);
+    let matches = Cli::command().get_matches();
+    let cli = Cli::from_arg_matches(&matches).expect("Failed to parse CLI arguments");
+    let file_config = match load_config_file() {
+        Ok(config) => config,
+        Err(err) => {
+            eprintln!("error: {err}");
+            process::exit(err.exit_code());
+        }
+    };
+    let config = Config::from_sources(cli, &matches, file_config);
 
     if !config.list_devices {
         if let Some(model_path) = &config.model_path {
@@ -180,6 +287,37 @@ impl fmt::Display for AppError {
 
 impl Error for AppError {}
 
+fn load_config_file() -> Result<FileConfig, AppError> {
+    let path = match config_path() {
+        Some(path) => path,
+        None => return Ok(FileConfig::default()),
+    };
+
+    if !path.exists() {
+        return Ok(FileConfig::default());
+    }
+
+    let contents = fs::read_to_string(&path).map_err(|err| {
+        AppError::config(format!(
+            "failed to read config file {}: {err}",
+            path.display()
+        ))
+    })?;
+    toml::from_str(&contents).map_err(|err| {
+        AppError::config(format!(
+            "failed to parse config file {}: {err}",
+            path.display()
+        ))
+    })
+}
+
+fn config_path() -> Option<PathBuf> {
+    let config_home = env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
+    Some(config_home.join("soundvibes").join("config.toml"))
+}
+
 fn run_capture(config: &Config) -> Result<(), AppError> {
     let host = cpal::default_host();
     audio::configure_alsa_logging(config.debug_audio);
@@ -217,7 +355,7 @@ fn run_capture(config: &Config) -> Result<(), AppError> {
     audio::stream_segments(capture, config.sample_rate, vad, |samples, info| {
         let transcript = context
             .transcribe(samples, Some(&config.language))
-            .map_err(|err| AppError::runtime(err.to_string()))?;
+            .map_err(|err| err.to_string())?;
         emit_transcript(config.format, &transcript, info)
     })
     .map_err(|err| AppError::runtime(err))?;
@@ -228,7 +366,7 @@ fn emit_transcript(
     format: OutputFormat,
     text: &str,
     info: audio::SegmentInfo,
-) -> Result<(), AppError> {
+) -> Result<(), String> {
     match format {
         OutputFormat::Plain => {
             println!("Transcript {}: {}", info.index, text);
