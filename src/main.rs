@@ -83,7 +83,6 @@ struct Config {
     debug_vad: bool,
     list_devices: bool,
     dump_audio: bool,
-    daemon: bool,
 }
 
 impl Config {
@@ -195,7 +194,6 @@ impl Config {
             debug_vad,
             list_devices,
             dump_audio,
-            daemon: cli.daemon,
         }
     }
 }

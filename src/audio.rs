@@ -2,11 +2,15 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use ringbuf::{HeapConsumer, HeapProducer, HeapRb};
 use std::error::Error;
 use std::fmt;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 pub struct Capture {
     _stream: cpal::Stream,
     consumer: HeapConsumer<f32>,
+    overflow: Arc<Mutex<Vec<f32>>>,
+    overflow_count: Arc<AtomicUsize>,
 }
 
 pub const DEFAULT_CHUNK_MS: u64 = 250;
@@ -164,18 +168,68 @@ pub fn start_capture(
         sample_format, stream_config.channels, stream_config.sample_rate.0
     );
 
-    let ring = HeapRb::<f32>::new(sample_rate as usize * 5);
+    let ring = HeapRb::<f32>::new(sample_rate as usize * 30);
     let (producer, consumer) = ring.split();
+    let overflow = Arc::new(Mutex::new(Vec::new()));
+    let overflow_count = Arc::new(AtomicUsize::new(0));
 
     let stream = match sample_format {
-        cpal::SampleFormat::F32 => build_input_stream::<f32>(&device, &stream_config, producer)?,
-        cpal::SampleFormat::F64 => build_input_stream::<f64>(&device, &stream_config, producer)?,
-        cpal::SampleFormat::I8 => build_input_stream::<i8>(&device, &stream_config, producer)?,
-        cpal::SampleFormat::I16 => build_input_stream::<i16>(&device, &stream_config, producer)?,
-        cpal::SampleFormat::I32 => build_input_stream::<i32>(&device, &stream_config, producer)?,
-        cpal::SampleFormat::U8 => build_input_stream::<u8>(&device, &stream_config, producer)?,
-        cpal::SampleFormat::U16 => build_input_stream::<u16>(&device, &stream_config, producer)?,
-        cpal::SampleFormat::U32 => build_input_stream::<u32>(&device, &stream_config, producer)?,
+        cpal::SampleFormat::F32 => build_input_stream::<f32>(
+            &device,
+            &stream_config,
+            producer,
+            &overflow,
+            &overflow_count,
+        )?,
+        cpal::SampleFormat::F64 => build_input_stream::<f64>(
+            &device,
+            &stream_config,
+            producer,
+            &overflow,
+            &overflow_count,
+        )?,
+        cpal::SampleFormat::I8 => build_input_stream::<i8>(
+            &device,
+            &stream_config,
+            producer,
+            &overflow,
+            &overflow_count,
+        )?,
+        cpal::SampleFormat::I16 => build_input_stream::<i16>(
+            &device,
+            &stream_config,
+            producer,
+            &overflow,
+            &overflow_count,
+        )?,
+        cpal::SampleFormat::I32 => build_input_stream::<i32>(
+            &device,
+            &stream_config,
+            producer,
+            &overflow,
+            &overflow_count,
+        )?,
+        cpal::SampleFormat::U8 => build_input_stream::<u8>(
+            &device,
+            &stream_config,
+            producer,
+            &overflow,
+            &overflow_count,
+        )?,
+        cpal::SampleFormat::U16 => build_input_stream::<u16>(
+            &device,
+            &stream_config,
+            producer,
+            &overflow,
+            &overflow_count,
+        )?,
+        cpal::SampleFormat::U32 => build_input_stream::<u32>(
+            &device,
+            &stream_config,
+            producer,
+            &overflow,
+            &overflow_count,
+        )?,
         format => {
             return Err(AudioError::new(
                 AudioErrorKind::StreamConfig,
@@ -194,6 +248,8 @@ pub fn start_capture(
     Ok(Capture {
         _stream: stream,
         consumer,
+        overflow,
+        overflow_count,
     })
 }
 
@@ -201,10 +257,16 @@ pub fn drain_samples(capture: &mut Capture, output: &mut Vec<f32>) {
     while let Some(sample) = capture.consumer.pop() {
         output.push(sample);
     }
-}
-
-pub fn discard_samples(capture: &mut Capture) {
-    while capture.consumer.pop().is_some() {}
+    let mut overflow = capture
+        .overflow
+        .lock()
+        .expect("overflow buffer lock poisoned");
+    if !overflow.is_empty() {
+        let drained = overflow.len();
+        output.extend(overflow.drain(..));
+        capture.overflow_count.store(0, Ordering::Release);
+        eprintln!("audio overflow drained: {drained} samples");
+    }
 }
 
 pub fn trim_trailing_silence(samples: &[f32], sample_rate: u32, vad: &VadConfig) -> Vec<f32> {
@@ -299,6 +361,7 @@ fn select_stream_config(
     })?;
 
     let mut best: Option<(cpal::StreamConfig, cpal::SampleFormat)> = None;
+    let mut best_rank = 0u8;
     for config in configs {
         let min_rate = config.min_sample_rate().0;
         let max_rate = config.max_sample_rate().0;
@@ -313,13 +376,17 @@ fn select_stream_config(
             buffer_size: cpal::BufferSize::Default,
         };
 
-        let candidate = (stream_config, config.sample_format());
+        let format = config.sample_format();
+        let candidate = (stream_config, format);
+        let rank = sample_format_rank(format);
         if channels == 1 {
-            return Ok(candidate);
-        }
-
-        if best.is_none() {
+            if best.is_none() || rank > best_rank {
+                best = Some(candidate);
+                best_rank = rank;
+            }
+        } else if best.is_none() || rank > best_rank {
             best = Some(candidate);
+            best_rank = rank;
         }
     }
 
@@ -331,23 +398,47 @@ fn select_stream_config(
     })
 }
 
+fn sample_format_rank(format: cpal::SampleFormat) -> u8 {
+    match format {
+        cpal::SampleFormat::F32 => 6,
+        cpal::SampleFormat::F64 => 5,
+        cpal::SampleFormat::I32 => 4,
+        cpal::SampleFormat::I16 => 3,
+        cpal::SampleFormat::U16 => 2,
+        cpal::SampleFormat::I8 => 1,
+        cpal::SampleFormat::U8 => 0,
+        _ => 0,
+    }
+}
+
 fn build_input_stream<T>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
     mut producer: HeapProducer<f32>,
+    overflow: &Arc<Mutex<Vec<f32>>>,
+    overflow_count: &Arc<AtomicUsize>,
 ) -> Result<cpal::Stream, AudioError>
 where
     T: cpal::Sample + cpal::SizedSample,
     f32: cpal::FromSample<T>,
 {
     let channels = config.channels as usize;
+    let overflow = Arc::clone(overflow);
+    let overflow_count = Arc::clone(overflow_count);
+    let mut overflow_scratch = Vec::new();
     device
         .build_input_stream(
             config,
             move |data: &[T], _| {
+                overflow_scratch.clear();
+                let mut force_overflow = overflow_count.load(Ordering::Acquire) > 0;
                 if channels == 1 {
                     for sample in data {
-                        let _ = producer.push(sample.to_sample::<f32>());
+                        let value = sample.to_sample::<f32>();
+                        if force_overflow || producer.push(value).is_err() {
+                            overflow_scratch.push(value);
+                            force_overflow = true;
+                        }
                     }
                 } else {
                     for frame in data.chunks(channels) {
@@ -359,7 +450,21 @@ where
                             sum += sample.to_sample::<f32>();
                         }
                         let mono = sum / frame.len() as f32;
-                        let _ = producer.push(mono);
+                        if force_overflow || producer.push(mono).is_err() {
+                            overflow_scratch.push(mono);
+                            force_overflow = true;
+                        }
+                    }
+                }
+
+                if !overflow_scratch.is_empty() {
+                    let overflow_len = overflow_scratch.len();
+                    let was_empty = overflow_count.load(Ordering::Acquire) == 0;
+                    let mut overflow = overflow.lock().expect("overflow buffer lock poisoned");
+                    overflow.extend(overflow_scratch.drain(..));
+                    overflow_count.fetch_add(overflow_len, Ordering::Release);
+                    if was_empty {
+                        eprintln!("audio overflow detected: queued {overflow_len} samples");
                     }
                 }
             },
