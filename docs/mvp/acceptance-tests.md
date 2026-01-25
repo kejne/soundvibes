@@ -7,6 +7,7 @@ These tests validate the MVP behavior for the offline Linux CLI.
 - Model file available at `${XDG_DATA_HOME:-~/.local/share}/soundvibes/models/ggml-base.en.bin`.
 - Config file at `${XDG_CONFIG_HOME:-~/.config}/soundvibes/config.toml`.
 - No network required.
+- If available, a machine with a supported NVIDIA/AMD GPU for GPU-acceleration checks.
 
 ## Tests
 
@@ -47,3 +48,9 @@ These tests validate the MVP behavior for the offline Linux CLI.
 - Command: disconnect network, run `sv --daemon`, then `sv` to toggle on/off.
 - Expect: no network access required.
 - Pass: transcription works without network connectivity.
+
+### AT-07: GPU auto-select and CPU fallback
+- Setup: run on a machine with a supported NVIDIA/AMD GPU and another machine without GPU support.
+- Command: `sv --daemon`.
+- Expect: GPU machine logs show a GPU backend selected; CPU-only machine logs show fallback to CPU.
+- Pass: transcription succeeds on both, and no manual GPU selection is required.
