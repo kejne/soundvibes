@@ -3,6 +3,10 @@ name = "sv"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["vulkan"]
+vulkan = []
+
 [dependencies]
 clap = { version = "4.5.27", features = ["derive"] }
 cpal = "0.15.3"

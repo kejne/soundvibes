@@ -9,7 +9,8 @@ Offline voice-to-text CLI for Linux.
 - Linux x86_64
 - Microphone input device
 
-If you enable Vulkan GPU acceleration (see notes below), install the Vulkan loader + headers for your distro.
+Vulkan GPU acceleration is enabled by default. Install the Vulkan loader + headers for your distro,
+or build CPU-only with `cargo build --no-default-features`.
 
 - Arch Linux:
   - `sudo pacman -Syu vulkan-headers vulkan-icd-loader vulkan-validation-layers`

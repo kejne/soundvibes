@@ -5,25 +5,28 @@ use std::path::{Path, PathBuf};
 fn main() {
     let whisper_dir = Path::new("vendor/whisper.cpp");
     let mut config = cmake::Config::new(whisper_dir);
-    if let Some(sdk_root) = resolve_vulkan_sdk() {
-        let mut prefix = env::var_os("CMAKE_PREFIX_PATH").unwrap_or_default();
-        if !prefix.is_empty() {
-            prefix.push(OsString::from(";"));
+    let enable_vulkan = env::var_os("CARGO_FEATURE_VULKAN").is_some();
+    if enable_vulkan {
+        if let Some(sdk_root) = resolve_vulkan_sdk() {
+            let mut prefix = env::var_os("CMAKE_PREFIX_PATH").unwrap_or_default();
+            if !prefix.is_empty() {
+                prefix.push(OsString::from(";"));
+            }
+            prefix.push(sdk_root.as_os_str());
+            let prefix_string = prefix.to_string_lossy().into_owned();
+            config.env("VULKAN_SDK", &sdk_root);
+            config.env("CMAKE_PREFIX_PATH", &prefix_string);
+            config.define("CMAKE_PREFIX_PATH", &prefix_string);
+            config.define("Vulkan_ROOT", sdk_root.to_string_lossy().as_ref());
+            config.define(
+                "Vulkan_INCLUDE_DIR",
+                sdk_root.join("include").to_string_lossy().as_ref(),
+            );
+            config.define(
+                "Vulkan_GLSLC_EXECUTABLE",
+                sdk_root.join("bin/glslc").to_string_lossy().as_ref(),
+            );
         }
-        prefix.push(sdk_root.as_os_str());
-        let prefix_string = prefix.to_string_lossy().into_owned();
-        config.env("VULKAN_SDK", &sdk_root);
-        config.env("CMAKE_PREFIX_PATH", &prefix_string);
-        config.define("CMAKE_PREFIX_PATH", &prefix_string);
-        config.define("Vulkan_ROOT", sdk_root.to_string_lossy().as_ref());
-        config.define(
-            "Vulkan_INCLUDE_DIR",
-            sdk_root.join("include").to_string_lossy().as_ref(),
-        );
-        config.define(
-            "Vulkan_GLSLC_EXECUTABLE",
-            sdk_root.join("bin/glslc").to_string_lossy().as_ref(),
-        );
     }
     let dst = config
         .define("BUILD_SHARED_LIBS", "OFF")
@@ -35,7 +38,7 @@ fn main() {
         .define("WHISPER_SDL2", "OFF")
         .define("WHISPER_FFMPEG", "OFF")
         .define("GGML_OPENMP", "ON")
-        .define("GGML_VULKAN", "ON")
+        .define("GGML_VULKAN", if enable_vulkan { "ON" } else { "OFF" })
         .define("WHISPER_OPENVINO", "OFF")
         .define("WHISPER_COREML", "OFF")
         .build();
@@ -46,14 +49,18 @@ fn main() {
     println!("cargo:rustc-link-lib=static=ggml");
     println!("cargo:rustc-link-lib=static=ggml-base");
     println!("cargo:rustc-link-lib=static=ggml-cpu");
-    println!("cargo:rustc-link-lib=static=ggml-vulkan");
+    if enable_vulkan {
+        println!("cargo:rustc-link-lib=static=ggml-vulkan");
+    }
     println!("cargo:rustc-link-lib=pthread");
     println!("cargo:rustc-link-lib=dl");
     println!("cargo:rustc-link-lib=stdc++");
 
     if cfg!(target_os = "linux") {
         println!("cargo:rustc-link-lib=gomp");
-        println!("cargo:rustc-link-lib=vulkan");
+        if enable_vulkan {
+            println!("cargo:rustc-link-lib=vulkan");
+        }
     }
 
     let header_path = whisper_dir.join("include/whisper.h");
