@@ -113,7 +113,7 @@ Set `mode = "inject"` in the config to inject text at the focused cursor.
 - Wayland: install `wtype` (virtual keyboard).
 - X11: install `xdotool` (XTest).
 
-If the injector is unavailable, `sv` falls back to stdout with a warning.
+`sv` tries Wayland injection first, then X11, and falls back to stdout with a warning.
 
 ## Documentation
 - PRD: `docs/mvp/prd-stt-cli.md`

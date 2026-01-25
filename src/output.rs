@@ -2,13 +2,6 @@ use std::env;
 use std::fmt;
 use std::process::Command;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum SessionType {
-    Wayland,
-    X11,
-    Unknown,
-}
-
 #[derive(Debug)]
 pub struct OutputError {
     message: String,
@@ -28,50 +21,72 @@ impl fmt::Display for OutputError {
     }
 }
 
-pub fn detect_session_type() -> SessionType {
-    if let Ok(value) = env::var("XDG_SESSION_TYPE") {
-        return match value.to_lowercase().as_str() {
-            "wayland" => SessionType::Wayland,
-            "x11" => SessionType::X11,
-            _ => SessionType::Unknown,
-        };
-    }
-
-    if env::var_os("WAYLAND_DISPLAY").is_some() {
-        return SessionType::Wayland;
-    }
-
-    if env::var_os("DISPLAY").is_some() {
-        return SessionType::X11;
-    }
-
-    SessionType::Unknown
-}
-
 pub fn inject_text(text: &str) -> Result<(), OutputError> {
-    match detect_session_type() {
-        SessionType::Wayland => inject_wayland(text),
-        SessionType::X11 => inject_x11(text),
-        SessionType::Unknown => Err(OutputError::new(
-            "unable to detect session type; set XDG_SESSION_TYPE to wayland or x11",
-        )),
+    let mut errors = Vec::new();
+    if let Some(err) = try_wayland(text)? {
+        errors.push(err);
+    } else {
+        return Ok(());
     }
+
+    if let Some(err) = try_x11(text)? {
+        errors.push(err);
+    } else {
+        return Ok(());
+    }
+
+    Err(OutputError::new(format!(
+        "no supported injection backends available ({})",
+        errors.join("; ")
+    )))
 }
 
-fn inject_wayland(text: &str) -> Result<(), OutputError> {
-    run_command(
+fn try_wayland(text: &str) -> Result<Option<String>, OutputError> {
+    if !has_wayland_session() {
+        return Ok(Some("wayland session not detected".to_string()));
+    }
+
+    match run_command(
         "wtype",
         &["--", text],
         "install wtype to enable Wayland text injection",
-    )
+    ) {
+        Ok(()) => Ok(None),
+        Err(err) => Ok(Some(format!("wayland: {err}"))),
+    }
 }
 
-fn inject_x11(text: &str) -> Result<(), OutputError> {
-    run_command(
+fn try_x11(text: &str) -> Result<Option<String>, OutputError> {
+    if !has_x11_session() {
+        return Ok(Some("x11 session not detected".to_string()));
+    }
+
+    match run_command(
         "xdotool",
         &["type", "--clearmodifiers", "--delay", "0", "--", text],
         "install xdotool to enable X11 text injection",
-    )
+    ) {
+        Ok(()) => Ok(None),
+        Err(err) => Ok(Some(format!("x11: {err}"))),
+    }
+}
+
+fn has_wayland_session() -> bool {
+    if let Ok(value) = env::var("XDG_SESSION_TYPE") {
+        if value.eq_ignore_ascii_case("wayland") {
+            return true;
+        }
+    }
+    env::var_os("WAYLAND_DISPLAY").is_some()
+}
+
+fn has_x11_session() -> bool {
+    if let Ok(value) = env::var("XDG_SESSION_TYPE") {
+        if value.eq_ignore_ascii_case("x11") {
+            return true;
+        }
+    }
+    env::var_os("DISPLAY").is_some()
 }
 
 fn run_command(program: &str, args: &[&str], help: &str) -> Result<(), OutputError> {
@@ -126,16 +141,22 @@ mod tests {
     }
 
     #[test]
-    fn detect_session_type_prefers_xdg_session_type() {
+    fn detects_wayland_session_from_env() {
         let _guard = EnvGuard::set("XDG_SESSION_TYPE", "wayland");
-        assert_eq!(detect_session_type(), SessionType::Wayland);
+        assert!(has_wayland_session());
     }
 
     #[test]
-    fn detect_session_type_uses_display_fallbacks() {
+    fn detects_x11_session_from_env() {
+        let _guard = EnvGuard::set("XDG_SESSION_TYPE", "x11");
+        assert!(has_x11_session());
+    }
+
+    #[test]
+    fn detects_wayland_session_from_display_fallback() {
         let _guard = EnvGuard::remove("XDG_SESSION_TYPE");
         let _wayland_guard = EnvGuard::set("WAYLAND_DISPLAY", "wayland-0");
         let _display_guard = EnvGuard::remove("DISPLAY");
-        assert_eq!(detect_session_type(), SessionType::Wayland);
+        assert!(has_wayland_session());
     }
 }
