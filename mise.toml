@@ -1,3 +1,10 @@
+[env]
+VULKAN_SDK = "{{ env.HOME }}/.local/share/vulkan-sdk/current/x86_64"
+CMAKE_PREFIX_PATH = "{{ env.HOME }}/.local/share/vulkan-sdk/current/x86_64;{{ env.CMAKE_PREFIX_PATH | default(value=\"\") }}"
+PATH = "{{ env.HOME }}/.local/share/vulkan-sdk/current/x86_64/bin:{{ env.PATH | default(value=\"\") }}"
+LD_LIBRARY_PATH = "{{ env.HOME }}/.local/share/vulkan-sdk/current/x86_64/lib:{{ env.LD_LIBRARY_PATH | default(value=\"\") }}"
+VK_LAYER_PATH = "{{ env.HOME }}/.local/share/vulkan-sdk/current/x86_64/etc/vulkan/explicit_layer.d:{{ env.VK_LAYER_PATH | default(value=\"\") }}"
+
 [tasks.download-model]
 description = "Download a whisper.cpp English model by size"
 run = "data_dir=${XDG_DATA_HOME:-$HOME/.local/share}/soundvibes/models && mkdir -p \"$data_dir\" && size=${SIZE:-base} && model=ggml-${size}.en.bin && curl -L -o \"$data_dir/${model}\" \"https://huggingface.co/ggerganov/whisper.cpp/resolve/main/${model}\""
@@ -9,3 +16,54 @@ run = "cargo run --"
 [tasks.debug-local]
 description = "Run sv with local model"
 run = "cargo run -- --model ./models/ggml-tiny.en.bin --debug-vad"
+
+[tasks.prepare-dev]
+description = "Install build prerequisites based on OS"
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ -f /etc/os-release ]]; then
+  . /etc/os-release
+else
+  ID=""
+fi
+
+case "${ID}" in
+  ubuntu|debian)
+    sudo apt update
+    sudo apt install -y build-essential cmake pkg-config libasound2-dev libvulkan1 glslang-tools curl clang libclang-dev
+
+    sdk_base="${HOME}/.local/share/vulkan-sdk"
+    sdk_version="${VULKAN_SDK_VERSION:-1.4.335.0}"
+    sdk_archive="${sdk_base}/vulkan_sdk_${sdk_version}.tar.xz"
+
+    mkdir -p "${sdk_base}"
+
+    if [[ ! -d "${sdk_base}/${sdk_version}/x86_64" ]]; then
+      curl -fL "https://sdk.lunarg.com/sdk/download/${sdk_version}/linux/vulkan_sdk.tar.xz" -o "${sdk_archive}"
+      tar -xf "${sdk_archive}" -C "${sdk_base}"
+      rm -f "${sdk_archive}"
+    fi
+
+    sdk_root="${sdk_base}/${sdk_version}/x86_64"
+    sdk_link="${sdk_base}/current"
+    if [[ -d "${sdk_root}" ]]; then
+      ln -sfn "${sdk_base}/${sdk_version}" "${sdk_link}"
+      echo "Vulkan SDK installed to ${sdk_root}"
+      echo "Symlinked ${sdk_link} -> ${sdk_base}/${sdk_version}"
+      echo "Build uses ${sdk_link}/x86_64 automatically; sourcing setup-env.sh is optional."
+    else
+      echo "Vulkan SDK not found at ${sdk_root}; install manually."
+    fi
+    ;;
+  arch|manjaro|endeavouros)
+    sudo pacman -Syu --needed base-devel cmake pkg-config alsa-lib vulkan-headers vulkan-icd-loader glslang
+    ;;
+  *)
+    echo "Unsupported distro; install cmake, pkg-config, ALSA, Vulkan headers/loader, and glslc manually."
+    ;;
+esac
+
+git submodule update --init --recursive
+'''
