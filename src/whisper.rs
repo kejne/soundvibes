@@ -1,7 +1,10 @@
-use std::ffi::{CStr, CString, NulError};
+use std::ffi::{c_void, CStr, CString, NulError};
+use std::os::raw::c_char;
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 use std::ptr::NonNull;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
 use std::thread;
 
 #[allow(
@@ -21,6 +24,80 @@ pub enum WhisperError {
     InvalidPath(NulError),
     InitFailed,
     TranscriptionFailed(i32),
+}
+
+struct LogCapture {
+    gpu_backend: Mutex<Option<String>>,
+    saw_no_gpu: AtomicBool,
+}
+
+impl LogCapture {
+    fn new() -> Self {
+        Self {
+            gpu_backend: Mutex::new(None),
+            saw_no_gpu: AtomicBool::new(false),
+        }
+    }
+
+    fn reset(&self) {
+        if let Ok(mut backend) = self.gpu_backend.lock() {
+            *backend = None;
+        }
+        self.saw_no_gpu.store(false, Ordering::Relaxed);
+    }
+
+    fn capture_line(&self, message: &str) {
+        if message.contains("whisper_backend_init_gpu: no GPU found") {
+            self.saw_no_gpu.store(true, Ordering::Relaxed);
+            return;
+        }
+
+        if let Some((_, rest)) = message.split_once("whisper_backend_init_gpu: using ") {
+            let backend = rest.trim().trim_end_matches(" backend");
+            if let Ok(mut stored) = self.gpu_backend.lock() {
+                if stored.is_none() {
+                    *stored = Some(backend.to_string());
+                }
+            }
+        }
+    }
+
+    fn summary(&self) -> String {
+        let backend = self.gpu_backend.lock().ok().and_then(|value| value.clone());
+        if let Some(backend) = backend {
+            return format!("whisper: GPU backend selected: {backend}");
+        }
+        if self.saw_no_gpu.load(Ordering::Relaxed) {
+            return "whisper: no GPU backend detected; using CPU".to_string();
+        }
+        "whisper: GPU backend selection not reported; using CPU".to_string()
+    }
+}
+
+static LOG_CAPTURE: OnceLock<LogCapture> = OnceLock::new();
+
+fn log_capture() -> &'static LogCapture {
+    LOG_CAPTURE.get_or_init(LogCapture::new)
+}
+
+unsafe extern "C" fn whisper_log_callback(
+    _level: ggml_log_level,
+    text: *const c_char,
+    user_data: *mut c_void,
+) {
+    if text.is_null() {
+        return;
+    }
+    if _level == ggml_log_level_GGML_LOG_LEVEL_DEBUG {
+        return;
+    }
+    let message = CStr::from_ptr(text).to_string_lossy();
+    if !user_data.is_null() {
+        if let Some(state) = (user_data as *const LogCapture).as_ref() {
+            state.capture_line(&message);
+        }
+    }
+    eprint!("{message}");
 }
 
 impl std::fmt::Display for WhisperError {
@@ -52,6 +129,14 @@ impl WhisperContext {
     pub fn from_file(path: &Path) -> Result<Self, WhisperError> {
         let path_c =
             CString::new(path.as_os_str().as_bytes()).map_err(WhisperError::InvalidPath)?;
+        let log_capture = log_capture();
+        log_capture.reset();
+        unsafe {
+            whisper_log_set(
+                Some(whisper_log_callback),
+                log_capture as *const _ as *mut c_void,
+            );
+        }
         let mut params = unsafe { whisper_context_default_params() };
         params.use_gpu = true;
         params.flash_attn = false;
@@ -59,6 +144,7 @@ impl WhisperContext {
 
         let ctx = unsafe { whisper_init_from_file_with_params(path_c.as_ptr(), params) };
         let ctx = NonNull::new(ctx).ok_or(WhisperError::InitFailed)?;
+        eprintln!("{}", log_capture.summary());
         Ok(Self { ctx })
     }
 
