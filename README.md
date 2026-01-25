@@ -9,6 +9,18 @@ Offline voice-to-text CLI for Linux.
 - Linux x86_64
 - Microphone input device
 
+If you enable Vulkan GPU acceleration (see notes below), install the Vulkan loader + headers for your distro.
+
+- Arch Linux:
+  - `sudo pacman -Syu vulkan-headers vulkan-icd-loader vulkan-validation-layers`
+  - GPU ICD: `sudo pacman -S vulkan-radeon` (AMD) or `sudo pacman -S nvidia-utils` (NVIDIA)
+- Ubuntu / Debian:
+  - `sudo apt-get update && sudo apt-get install -y libvulkan-dev vulkan-validationlayers`
+  - GPU ICD: `sudo apt-get install -y mesa-vulkan-drivers` (AMD/Intel) or `sudo apt-get install -y nvidia-driver-<version>`
+- Fedora:
+  - `sudo dnf install -y vulkan-headers vulkan-loader vulkan-validation-layers`
+  - GPU ICD: `sudo dnf install -y mesa-vulkan-drivers` (AMD/Intel) or `sudo dnf install -y akmod-nvidia`
+
 ## Model Setup
 Download a whisper.cpp ggml model to the XDG data directory.
 

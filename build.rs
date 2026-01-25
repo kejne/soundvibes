@@ -12,7 +12,8 @@ fn main() {
         .define("WHISPER_CURL", "OFF")
         .define("WHISPER_SDL2", "OFF")
         .define("WHISPER_FFMPEG", "OFF")
-        .define("GGML_OPENMP", "OFF")
+        .define("GGML_OPENMP", "ON")
+        .define("GGML_VULKAN", "ON")
         .define("WHISPER_OPENVINO", "OFF")
         .define("WHISPER_COREML", "OFF")
         .build();
@@ -23,9 +24,15 @@ fn main() {
     println!("cargo:rustc-link-lib=static=ggml");
     println!("cargo:rustc-link-lib=static=ggml-base");
     println!("cargo:rustc-link-lib=static=ggml-cpu");
+    println!("cargo:rustc-link-lib=static=ggml-vulkan");
     println!("cargo:rustc-link-lib=pthread");
     println!("cargo:rustc-link-lib=dl");
     println!("cargo:rustc-link-lib=stdc++");
+
+    if cfg!(target_os = "linux") {
+        println!("cargo:rustc-link-lib=gomp");
+        println!("cargo:rustc-link-lib=vulkan");
+    }
 
     let header_path = whisper_dir.join("include/whisper.h");
     println!("cargo:rerun-if-changed={}", header_path.display());

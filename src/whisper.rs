@@ -2,6 +2,7 @@ use std::ffi::{CStr, CString, NulError};
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 use std::ptr::NonNull;
+use std::thread;
 
 #[allow(
     dead_code,
@@ -52,7 +53,7 @@ impl WhisperContext {
         let path_c =
             CString::new(path.as_os_str().as_bytes()).map_err(WhisperError::InvalidPath)?;
         let mut params = unsafe { whisper_context_default_params() };
-        params.use_gpu = false;
+        params.use_gpu = true;
         params.flash_attn = false;
         params.gpu_device = 0;
 
@@ -75,7 +76,11 @@ impl WhisperContext {
         params.no_timestamps = true;
         params.single_segment = true;
         params.translate = false;
-        params.n_threads = 4;
+        let available_threads = thread::available_parallelism()
+            .map(|count| count.get())
+            .unwrap_or(1);
+        let n_threads = (available_threads / 2).max(1) as i32;
+        params.n_threads = n_threads;
 
         let detect_language = language.is_none();
         let language_cstring;
