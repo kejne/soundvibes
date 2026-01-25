@@ -44,7 +44,7 @@ struct Cli {
     #[arg(long, default_value = "plain", value_name = "MODE")]
     format: OutputFormat,
 
-    #[arg(long, default_value = "stdout", value_name = "MODE")]
+    #[arg(long, default_value = "inject", value_name = "MODE")]
     mode: OutputMode,
 
     #[arg(long, default_value = "on", value_name = "MODE")]
