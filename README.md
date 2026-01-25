@@ -56,7 +56,7 @@ device = "default"
 sample_rate = 16000
 format = "plain"
 vad = false
-mode = "stdout"
+mode = "inject"
 ```
 
 If `model` is omitted, `sv` defaults to `${XDG_DATA_HOME:-~/.local/share}/soundvibes/models/ggml-base.en.bin`.
