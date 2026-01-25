@@ -5,6 +5,8 @@ use clap::parser::ValueSource;
 use clap::{CommandFactory, FromArgMatches, Parser, ValueEnum};
 use hound::WavSpec;
 use serde::Deserialize;
+use signal_hook::consts::signal::{SIGINT, SIGTERM};
+use signal_hook::flag;
 use std::env;
 use std::error::Error;
 use std::fmt;
@@ -13,7 +15,9 @@ use std::io::{Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 use sv::whisper::WhisperContext;
@@ -464,6 +468,13 @@ fn run_daemon(config: &Config) -> Result<(), AppError> {
     let (_guard, control_events) = start_socket_listener(&socket_path)?;
     println!("Daemon listening on {}", socket_path.display());
 
+    let shutdown = Arc::new(AtomicBool::new(false));
+    for signal in [SIGINT, SIGTERM] {
+        flag::register(signal, Arc::clone(&shutdown)).map_err(|err| {
+            AppError::runtime(format!("failed to register signal handler: {err}"))
+        })?;
+    }
+
     let host = select_audio_host(config.audio_host)?;
     audio::configure_alsa_logging(config.debug_audio);
     let devices = audio::list_input_devices(&host).map_err(|err| AppError::audio(err.message))?;
@@ -492,15 +503,32 @@ fn run_daemon(config: &Config) -> Result<(), AppError> {
     let mut capture: Option<audio::Capture> = None;
 
     loop {
+        if shutdown.load(Ordering::Relaxed) {
+            if recording {
+                stop_recording(
+                    &context,
+                    config,
+                    &vad,
+                    &mut capture,
+                    &mut buffer,
+                    &mut utterance_index,
+                )?;
+            }
+            println!("Daemon shutting down.");
+            break;
+        }
         match control_events.recv_timeout(Duration::from_millis(20)) {
             Ok(ControlEvent::Toggle) => {
                 if recording {
                     recording = false;
-                    let mut active = capture
-                        .take()
-                        .ok_or_else(|| AppError::runtime("capture stream missing"))?;
-                    audio::drain_samples(&mut active, &mut buffer);
-                    finalize_recording(&context, config, &vad, &buffer, &mut utterance_index)?;
+                    stop_recording(
+                        &context,
+                        config,
+                        &vad,
+                        &mut capture,
+                        &mut buffer,
+                        &mut utterance_index,
+                    )?;
                 } else {
                     let new_capture =
                         audio::start_capture(&host, config.device.as_deref(), config.sample_rate)
@@ -529,6 +557,23 @@ fn run_daemon(config: &Config) -> Result<(), AppError> {
             }
         }
     }
+    Ok(())
+}
+
+fn stop_recording(
+    context: &WhisperContext,
+    config: &Config,
+    vad: &audio::VadConfig,
+    capture: &mut Option<audio::Capture>,
+    buffer: &mut Vec<f32>,
+    utterance_index: &mut u64,
+) -> Result<(), AppError> {
+    let mut active = capture
+        .take()
+        .ok_or_else(|| AppError::runtime("capture stream missing"))?;
+    audio::drain_samples(&mut active, buffer);
+    finalize_recording(context, config, vad, buffer, utterance_index)?;
+    Ok(())
 }
 
 fn finalize_recording(
@@ -659,7 +704,7 @@ fn send_toggle_command() -> Result<(), AppError> {
     }
     let mut stream = UnixStream::connect(&socket_path).map_err(|err| {
         AppError::runtime(format!(
-            "failed to connect to daemon socket {}: {err}",
+            "daemon socket unavailable at {}. Start it with `sv --daemon` ({err})",
             socket_path.display()
         ))
     })?;
@@ -817,5 +862,22 @@ mod tests {
 
         let err = send_toggle_command().expect_err("expected socket error");
         assert!(err.to_string().contains("daemon socket not found"));
+    }
+
+    #[test]
+    fn toggle_command_errors_when_socket_unavailable() {
+        let _lock = lock_tests();
+        let runtime_dir = temp_runtime_dir();
+        fs::create_dir_all(&runtime_dir).expect("failed to create test runtime dir");
+        let _guard = EnvGuard::set("XDG_RUNTIME_DIR", &runtime_dir);
+        let socket_path = daemon_socket_path().expect("failed to compute socket path");
+        if let Some(parent) = socket_path.parent() {
+            fs::create_dir_all(parent).expect("failed to create socket dir");
+        }
+        fs::write(&socket_path, b"not-a-socket").expect("failed to create socket file");
+
+        let err = send_toggle_command().expect_err("expected socket error");
+        assert!(err.to_string().contains("daemon socket unavailable"));
+        assert!(err.to_string().contains("sv --daemon"));
     }
 }

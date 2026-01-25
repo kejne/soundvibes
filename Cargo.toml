@@ -12,6 +12,7 @@ serde = { version = "1.0.197", features = ["derive"] }
 toml = "0.8.12"
 chrono = "0.4.39"
 hound = "3.5.1"
+signal-hook = "0.3.17"
 
 [dev-dependencies]
 

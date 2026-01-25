@@ -71,6 +71,37 @@ In another terminal:
 sv
 ```
 
+## Daemon Lifecycle
+Run `sv --daemon` in the foreground for quick tests, or use a user systemd service
+to keep it running across sessions.
+
+Example user unit (`~/.config/systemd/user/sv.service`):
+
+```ini
+[Unit]
+Description=SoundVibes daemon
+
+[Service]
+ExecStart=%h/.cargo/bin/sv --daemon
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+```
+
+Enable and start:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now sv.service
+```
+
+Stop it cleanly:
+
+```bash
+systemctl --user stop sv.service
+```
+
 ## Output Formats
 - `plain` (default): prints the final transcript after capture stops.
 - `jsonl`: emits JSON lines with `type`, `text`, `timestamp`.
