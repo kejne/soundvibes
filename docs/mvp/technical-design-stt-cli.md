@@ -8,6 +8,7 @@ This document describes the technical design for the `sv` CLI that performs offl
 - Start/stop capture with transcription after capture stops.
 - Best-effort latency on CPU.
 - Support daemon mode with socket-based control and text injection at the cursor.
+- Automatically use NVIDIA/AMD GPUs for inference when available, falling back to CPU.
 
 ## Architecture
 - CLI entrypoint loads configuration.
@@ -64,6 +65,12 @@ This document describes the technical design for the `sv` CLI that performs offl
 - Load ggml model at startup.
 - Run inference on captured audio and return a final transcript.
 - Use a small quantized model for CPU speed.
+- Attempt GPU acceleration automatically; fall back to CPU when no supported GPU backend is detected.
+
+### GPU Backend Selection
+- Build whisper.cpp with GPU backends enabled (Vulkan for AMD/NVIDIA, CUDA for NVIDIA when available).
+- Always enable GPU usage in runtime params; rely on whisper.cpp backend detection to select the first supported device.
+- Do not expose GPU selection to the user; if no GPU backend is available, inference continues on CPU.
 
 ### Output Formatting
 - `plain`: print final transcript after transcription completes.
@@ -93,6 +100,7 @@ This document describes the technical design for the `sv` CLI that performs offl
 - Confirm offline operation by disconnecting network.
 - Validate socket toggle commands against the daemon.
 - Validate injection into a focused editor.
+- Validate GPU usage on NVIDIA/AMD systems by checking whisper.cpp startup logs, and verify CPU fallback on systems without a supported GPU backend.
 
 ## Open Questions
 - Best default model (tiny vs base) for CPU speed.
