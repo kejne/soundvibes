@@ -1,7 +1,7 @@
-# Technical Design: Offline STT CLI (sv)
+# Technical Design: Soundvibes Offline Voice-to-Text CLI
 
 ## Overview
-This document describes the technical design for the `sv` CLI that performs offline, start/stop speech-to-text on Linux using whisper.cpp with a small quantized model.
+This document describes the technical design for the `sv` CLI that performs offline, start/stop voice-to-text on Linux using whisper.cpp with a small quantized model.
 
 ## Goals
 - Single binary plus local model file.
@@ -24,7 +24,7 @@ This document describes the technical design for the `sv` CLI that performs offl
 
 ### Config
 - Load settings from `${XDG_CONFIG_HOME:-~/.config}/soundvibes/config.toml`.
-- No CLI flags in MVP; configuration is file-only.
+- CLI flags complement configuration and override file values when present.
 - Defaults are applied if keys are missing.
 - Configuration struct shared across pipeline components.
 - Add `mode` to select `stdout` (default) or `inject` for daemon output.

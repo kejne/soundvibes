@@ -117,12 +117,12 @@ Set `mode = "inject"` in the config to inject text at the focused cursor.
 `sv` tries Wayland injection first, then X11, and falls back to stdout with a warning.
 
 ## Documentation
-- PRD: `docs/mvp/prd-stt-cli.md`
-- Technical design: `docs/mvp/technical-design-stt-cli.md`
-- Acceptance tests: `docs/mvp/acceptance-tests.md`
+- PRD: `docs/prd.md`
+- Technical design: `docs/technical-design.md`
+- Acceptance tests: `docs/acceptance-tests.md`
 
 ## Validation
-These steps align with `docs/mvp/acceptance-tests.md`.
+These steps align with `docs/acceptance-tests.md`.
 
 1. Ensure the model is downloaded (see Model Setup).
 2. Create a valid config file (see Configuration).
@@ -136,4 +136,4 @@ These steps align with `docs/mvp/acceptance-tests.md`.
    ```
    Update `model` in the config to the missing path first.
 5. Run the remaining acceptance checks (device errors, JSONL output, offline mode)
-   as listed in `docs/mvp/acceptance-tests.md`.
+   as listed in `docs/acceptance-tests.md`.

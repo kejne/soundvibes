@@ -114,7 +114,7 @@ Tests:
 - `src/audio.rs`: CPAL/ALSA capture, VAD trimming utilities.
 - `src/whisper.rs`: whisper.cpp FFI wrapper.
 - `tests/whisper_integration.rs`: integration test with a model file.
-- `docs/mvp/*.md`: product and acceptance documentation.
+- `docs/*.md`: product and acceptance documentation.
 
 ## Release / Session Completion
 

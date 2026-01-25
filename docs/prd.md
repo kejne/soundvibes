@@ -1,7 +1,9 @@
-# PRD: Offline Voice-to-Text CLI (Linux)
+# PRD: Soundvibes Offline Voice-to-Text CLI (Linux)
 
 ## Problem
 Linux users need a simple, offline start/stop voice-to-text tool that does not require installing heavy runtimes or managing complex dependencies.
+
+This PRD is a living document and should be updated as product requirements and behavior evolve.
 
 ## Goals
 - Provide start/stop recording from the default microphone with transcription after capture stops.
@@ -15,7 +17,7 @@ Linux users need a simple, offline start/stop voice-to-text tool that does not r
 - Linux developers and power users who want local voice-to-text.
 - Privacy-sensitive users who cannot use cloud APIs.
 
-## Scope (MVP)
+## Scope
 - CLI that captures audio from the default input device.
 - Start/stop recording: capture audio while toggled on, transcribe and print when stopped.
 - Small offline model (whisper.cpp tiny/base with quantization).
@@ -26,7 +28,7 @@ Linux users need a simple, offline start/stop voice-to-text tool that does not r
 - Socket-controlled CLI toggle for start/stop using the same binary.
 - Daemon mode can inject transcribed text at the cursor when requested.
 
-## Non-Goals (MVP)
+## Non-Goals
 - GUI or tray integration.
 - Speaker diarization.
 - Automatic punctuation or formatting.
@@ -67,7 +69,7 @@ Linux users need a simple, offline start/stop voice-to-text tool that does not r
 ## Performance Assumptions
 - Best-effort latency on CPU for a small model.
 - Acceptable transcription time after capture stops.
-- No hard latency SLA in MVP.
+- No hard latency SLA in the initial release.
 - GPU acceleration is opportunistic and should not require user configuration.
 
 ## Packaging & Distribution
