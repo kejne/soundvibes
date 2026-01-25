@@ -1,4 +1,5 @@
 mod audio;
+mod output;
 
 use chrono::Local;
 use clap::parser::ValueSource;
@@ -43,6 +44,9 @@ struct Cli {
     #[arg(long, default_value = "plain", value_name = "MODE")]
     format: OutputFormat,
 
+    #[arg(long, default_value = "stdout", value_name = "MODE")]
+    mode: OutputMode,
+
     #[arg(long, default_value = "on", value_name = "MODE")]
     vad: VadMode,
 
@@ -79,6 +83,7 @@ struct Config {
     audio_host: AudioHost,
     sample_rate: u32,
     format: OutputFormat,
+    mode: OutputMode,
     vad: VadMode,
     vad_silence_ms: u64,
     vad_threshold: f32,
@@ -122,6 +127,12 @@ impl Config {
             cli.format
         } else {
             file.format.unwrap_or(cli.format)
+        };
+
+        let mode = if matches.value_source("mode") == Some(ValueSource::CommandLine) {
+            cli.mode
+        } else {
+            file.mode.unwrap_or(cli.mode)
         };
 
         let vad = if matches.value_source("vad") == Some(ValueSource::CommandLine) {
@@ -190,6 +201,7 @@ impl Config {
             audio_host,
             sample_rate,
             format,
+            mode,
             vad,
             vad_silence_ms,
             vad_threshold,
@@ -207,6 +219,13 @@ impl Config {
 enum OutputFormat {
     Plain,
     Jsonl,
+}
+
+#[derive(Debug, Copy, Clone, ValueEnum, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum OutputMode {
+    Stdout,
+    Inject,
 }
 
 #[derive(Debug, Copy, Clone, ValueEnum, Deserialize)]
@@ -262,6 +281,7 @@ struct FileConfig {
     audio_host: Option<AudioHost>,
     sample_rate: Option<u32>,
     format: Option<OutputFormat>,
+    mode: Option<OutputMode>,
     vad: Option<VadSetting>,
     vad_silence_ms: Option<u64>,
     vad_threshold: Option<f32>,
@@ -307,6 +327,7 @@ fn main() {
     println!("Language: {}", config.language);
     println!("Sample rate: {} Hz", config.sample_rate);
     println!("Format: {:?}", config.format);
+    println!("Mode: {:?}", config.mode);
     println!("VAD: {:?}", config.vad);
     println!("VAD silence timeout: {} ms", config.vad_silence_ms);
     println!("VAD threshold: {:.4}", config.vad_threshold);
@@ -596,7 +617,7 @@ fn finalize_recording(
         .transcribe(&trimmed, Some(&config.language))
         .map_err(|err| AppError::runtime(err.to_string()))?;
     emit_transcript(
-        config.format,
+        config,
         &transcript,
         audio::SegmentInfo {
             index: *utterance_index,
@@ -714,11 +735,21 @@ fn send_toggle_command() -> Result<(), AppError> {
     Ok(())
 }
 
-fn emit_transcript(
-    format: OutputFormat,
-    text: &str,
-    info: audio::SegmentInfo,
-) -> Result<(), String> {
+fn emit_transcript(config: &Config, text: &str, info: audio::SegmentInfo) -> Result<(), String> {
+    match config.mode {
+        OutputMode::Stdout => emit_stdout(config.format, text, info),
+        OutputMode::Inject => {
+            if let Err(err) = output::inject_text(text) {
+                eprintln!("warn: {err}; falling back to stdout");
+                emit_stdout(config.format, text, info)
+            } else {
+                Ok(())
+            }
+        }
+    }
+}
+
+fn emit_stdout(format: OutputFormat, text: &str, info: audio::SegmentInfo) -> Result<(), String> {
     match format {
         OutputFormat::Plain => {
             println!("Transcript {}: {}", info.index, text);
