@@ -56,6 +56,7 @@ device = "default"
 sample_rate = 16000
 format = "plain"
 vad = false
+mode = "stdout"
 ```
 
 If `model` is omitted, `sv` defaults to `${XDG_DATA_HOME:-~/.local/share}/soundvibes/models/ggml-base.en.bin`.
@@ -105,6 +106,14 @@ systemctl --user stop sv.service
 ## Output Formats
 - `plain` (default): prints the final transcript after capture stops.
 - `jsonl`: emits JSON lines with `type`, `text`, `timestamp`.
+
+## Text Injection
+Set `mode = "inject"` in the config to inject text at the focused cursor.
+
+- Wayland: install `wtype` (virtual keyboard).
+- X11: install `xdotool` (XTest).
+
+If the injector is unavailable, `sv` falls back to stdout with a warning.
 
 ## Documentation
 - PRD: `docs/mvp/prd-stt-cli.md`
