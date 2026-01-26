@@ -14,6 +14,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 #[cfg(feature = "test-support")]
+use serde_json::Value;
+
+#[cfg(feature = "test-support")]
 use sv::daemon::test_support::{
     control_channel, TestAudioBackend, TestOutput, TestTranscriberFactory,
 };
@@ -189,6 +192,62 @@ fn at04_daemon_toggle_captures_and_transcribes() -> Result<(), Box<dyn Error>> {
         .stdout_lines()
         .iter()
         .any(|line| line.contains("Transcript 1: hello")));
+    Ok(())
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn at05_jsonl_output_formatting() -> Result<(), Box<dyn Error>> {
+    let (sender, receiver) = control_channel();
+    let control_sender = sender.clone();
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let mut output = TestOutput::default();
+    let deps = DaemonDeps {
+        audio: Box::new(TestAudioBackend::new(
+            vec!["Mic".to_string()],
+            vec![vec![0.2; 160]],
+        )),
+        transcriber_factory: Box::new(TestTranscriberFactory::new(vec!["hello".to_string()])),
+    };
+    let config = DaemonConfig {
+        model_path: None,
+        language: "en".to_string(),
+        device: None,
+        audio_host: AudioHost::Default,
+        sample_rate: 16_000,
+        format: OutputFormat::Jsonl,
+        mode: OutputMode::Stdout,
+        vad: VadMode::Off,
+        vad_silence_ms: 800,
+        vad_threshold: 0.015,
+        vad_chunk_ms: 250,
+        debug_audio: false,
+        debug_vad: false,
+        dump_audio: false,
+    };
+
+    let shutdown_trigger = Arc::clone(&shutdown);
+    let control_thread = thread::spawn(move || {
+        let _ = control_sender.send(sv::daemon::ControlEvent::Toggle);
+        let _ = control_sender.send(sv::daemon::ControlEvent::Toggle);
+        thread::sleep(Duration::from_millis(50));
+        shutdown_trigger.store(true, Ordering::Relaxed);
+    });
+
+    sv::daemon::run_daemon_loop(&config, &deps, &mut output, receiver, shutdown.as_ref())?;
+    control_thread.join().expect("control thread failed");
+
+    let json_line = output
+        .stdout_lines()
+        .iter()
+        .find(|line| line.starts_with('{'))
+        .ok_or("missing JSONL output")?;
+    let parsed: Value = serde_json::from_str(json_line)?;
+    assert_eq!(parsed["type"], "final");
+    assert_eq!(parsed["text"], "hello");
+    assert!(parsed["timestamp"].as_str().is_some());
+    assert!(parsed["utterance"].as_u64().is_some());
+    assert!(parsed["duration_ms"].as_u64().is_some());
     Ok(())
 }
 

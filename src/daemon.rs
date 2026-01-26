@@ -1,4 +1,4 @@
-use chrono::Local;
+use chrono::{Local, Utc};
 use signal_hook::consts::signal::{SIGINT, SIGTERM};
 use signal_hook::flag;
 use std::env;
@@ -321,9 +321,10 @@ fn emit_stdout(
         }
         OutputFormat::Jsonl => {
             let escaped = json_escape(text);
+            let timestamp = Utc::now().to_rfc3339();
             output.stdout(&format!(
-                "{{\"type\":\"final\",\"utterance\":{},\"duration_ms\":{},\"text\":\"{}\"}}",
-                info.index, info.duration_ms, escaped
+                "{{\"type\":\"final\",\"utterance\":{},\"duration_ms\":{},\"timestamp\":\"{}\",\"text\":\"{}\"}}",
+                info.index, info.duration_ms, timestamp, escaped
             ));
         }
     }
