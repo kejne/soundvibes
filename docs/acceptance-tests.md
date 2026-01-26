@@ -14,12 +14,6 @@ These tests validate the product behavior for the offline Linux CLI.
 - Hardware-dependent tests should be guarded with opt-in env vars:
   - `SV_MODEL_PATH` to point at a local model file for transcription tests.
   - `SV_HARDWARE_TESTS=1` to opt into microphone/GPU checks.
-## Test Harness Assumptions
-- Integration tests use a harness that can inject audio samples and capture output without requiring a physical microphone.
-- Tests that depend on hardware or isolation are env-gated and skip unless enabled.
-- `SV_MODEL_PATH` can be set to point to a local model for model-dependent tests.
-- `SV_TEST_GPU=1` enables GPU selection checks.
-- `SV_TEST_OFFLINE=1` enables offline network isolation checks.
 
 ## Tests
 
