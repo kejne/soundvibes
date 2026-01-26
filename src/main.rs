@@ -17,10 +17,10 @@ struct Cli {
     #[arg(long, value_name = "PATH")]
     model: Option<PathBuf>,
 
-    #[arg(long, default_value = "auto", value_name = "SIZE")]
+    #[arg(long, default_value = "small", value_name = "SIZE")]
     model_size: ModelSize,
 
-    #[arg(long, default_value = "en", value_name = "LANG")]
+    #[arg(long, default_value = "auto", value_name = "LANG")]
     model_language: ModelLanguage,
 
     #[arg(long, default_value = "en", value_name = "CODE")]

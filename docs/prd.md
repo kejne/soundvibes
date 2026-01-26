@@ -20,7 +20,7 @@ This PRD is a living document and should be updated as product requirements and 
 ## Scope
 - CLI that captures audio from the default input device.
 - Start/stop recording: capture audio while toggled on, transcribe and print when stopped.
-- Small offline model (whisper.cpp tiny/base with quantization).
+- Small offline model (whisper.cpp small with quantization by default).
 - Automatic GPU backend selection for NVIDIA/AMD devices with CPU fallback.
 - Configuration via `config.toml` in the XDG config directory.
 - Works on Linux x86_64.
@@ -63,7 +63,7 @@ This PRD is a living document and should be updated as product requirements and 
 
 ## Model Choice
 - Engine: whisper.cpp (FFI) for best accuracy-to-size tradeoff.
-- Initial model: tiny/base quantized (ggml).
+- Default model: small general (ggml).
 - Model is downloaded on demand to a default location and loaded locally.
 
 ## Performance Assumptions
@@ -81,7 +81,7 @@ This PRD is a living document and should be updated as product requirements and 
 - Load config from XDG base directory if available.
 - Default path: `${XDG_CONFIG_HOME:-~/.config}/soundvibes/config.toml`.
 - Config file format: TOML.
-- Config keys: `model`, `language`, `device`, `sample_rate`, `format`, `vad`, `mode`, `model_path`.
+- Config keys: `model`, `model_path`, `model_size`, `model_language`, `download_model`, `language`, `device`, `sample_rate`, `format`, `vad`, `mode`.
 
 ## Validation Plan
 - Manual test on Linux laptop with default microphone.

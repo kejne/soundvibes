@@ -23,14 +23,14 @@ pub enum ModelSize {
 impl ModelSize {
     fn resolved(self) -> Self {
         match self {
-            ModelSize::Auto => ModelSize::Base,
+            ModelSize::Auto => ModelSize::Small,
             other => other,
         }
     }
 
     fn as_str(self) -> &'static str {
         match self {
-            ModelSize::Auto => "base",
+            ModelSize::Auto => "small",
             ModelSize::Tiny => "tiny",
             ModelSize::Base => "base",
             ModelSize::Small => "small",

@@ -52,8 +52,8 @@ Create a config file at `${XDG_CONFIG_HOME:-~/.config}/soundvibes/config.toml`.
 
 ```toml
 model = "/home/you/.local/share/soundvibes/models/ggml-base.en.bin"
-model_size = "auto"
-model_language = "en"
+model_size = "small"
+model_language = "auto"
 download_model = true
 language = "auto"
 device = "default"
@@ -65,7 +65,7 @@ mode = "inject"
 
 If `model` is omitted, `sv` builds a default model path under
 `${XDG_DATA_HOME:-~/.local/share}/soundvibes/models/` based on `model_size` and
-`model_language`.
+`model_language` (defaults to the small general model).
 
 ## Usage
 ```bash

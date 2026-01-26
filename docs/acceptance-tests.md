@@ -26,7 +26,7 @@ These tests validate the product behavior for the offline Linux CLI.
 - Pass: exit code is `0` after user stops the process.
 
 ### AT-01a: Missing model is auto-downloaded
-- Setup: remove `${XDG_DATA_HOME:-~/.local/share}/soundvibes/models/ggml-base.en.bin`, set `model_size` to `auto`.
+- Setup: remove `${XDG_DATA_HOME:-~/.local/share}/soundvibes/models/ggml-small.bin`, set `model_size` to `small` and `model_language` to `auto`.
 - Command: `sv --daemon`
 - Expect: model download occurs before startup completes.
 - Pass: model file exists at the default location and daemon starts.

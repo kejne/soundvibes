@@ -89,7 +89,8 @@ fn at01a_missing_model_is_auto_downloaded() -> Result<(), Box<dyn Error>> {
     let (base_url, server_handle) = start_test_server(payload.clone())?;
     let _url_guard = EnvGuard::set("SV_MODEL_BASE_URL", &base_url);
 
-    let spec = sv::model::ModelSpec::new(sv::model::ModelSize::Auto, sv::model::ModelLanguage::En);
+    let spec =
+        sv::model::ModelSpec::new(sv::model::ModelSize::Auto, sv::model::ModelLanguage::Auto);
     let prepared = sv::model::prepare_model(None, &spec, true)?;
 
     assert!(prepared.downloaded, "expected model download");

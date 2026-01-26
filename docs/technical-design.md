@@ -28,7 +28,7 @@ This document describes the technical design for the `sv` CLI that performs offl
 - Defaults are applied if keys are missing.
 - Configuration struct shared across pipeline components.
 - Add `mode` to select `stdout` (default) or `inject` for daemon output.
-- Config supports `language` and `model_size` selection with `auto` mapping to the general model.
+- Config supports `model_language` and `model_size` selection with a default of the small general model.
 - Allow overriding the model install path (`model_path`) while keeping a default data directory.
 
 ### Audio Capture
@@ -71,7 +71,7 @@ This document describes the technical design for the `sv` CLI that performs offl
 
 ### Model Download
 - On `sv`/`sv --daemon` startup, check for the configured model in the default data directory.
-- Download the ggml model if missing, based on `language` and `model_size` config.
+- Download the ggml model if missing, based on `model_language` and `model_size` config (defaults to small + general).
 - If `model_path` is provided, download or resolve the model there instead of the default location.
 
 ### GPU Backend Selection
@@ -85,7 +85,7 @@ This document describes the technical design for the `sv` CLI that performs offl
 
 ## Configuration
 - Format: TOML.
-- Example fields: `model`, `language`, `device`, `sample_rate`, `format`, `vad`, `mode`.
+- Example fields: `model`, `model_path`, `model_size`, `model_language`, `download_model`, `language`, `device`, `sample_rate`, `format`, `vad`, `mode`.
 
 ## Data Flow
 1. CLI loads config and model.
