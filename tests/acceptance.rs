@@ -5,13 +5,13 @@ use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
+use std::sync::Arc;
+use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 
 #[cfg(feature = "test-support")]
 use std::sync::atomic::{AtomicBool, Ordering};
-#[cfg(feature = "test-support")]
-use std::sync::Arc;
 
 #[cfg(feature = "test-support")]
 use serde_json::Value;
@@ -303,6 +303,74 @@ fn at06_offline_operation() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+#[test]
+fn at07_gpu_auto_select() -> Result<(), Box<dyn Error>> {
+    if env::var("SV_HARDWARE_TESTS").ok().as_deref() != Some("1")
+        || env::var("SV_GPU_TESTS").ok().as_deref() != Some("1")
+    {
+        eprintln!("Skipping AT-07 GPU check; set SV_HARDWARE_TESTS=1 and SV_GPU_TESTS=1 to run.");
+        return Ok(());
+    }
+
+    let model_path = model_path()?;
+    if !model_path.exists() {
+        eprintln!(
+            "Skipping AT-07 GPU check; model file not found at {}",
+            model_path.display()
+        );
+        return Ok(());
+    }
+
+    let config_home = temp_dir("soundvibes-acceptance-config");
+    let runtime_dir = temp_dir("soundvibes-acceptance-runtime");
+    write_config(
+        &config_home,
+        &format!("model = \"{}\"\n", model_path.display()),
+    )?;
+
+    let stderr_lines = run_daemon_for_logs(&config_home, &runtime_dir)?;
+    let stderr_joined = stderr_lines.join("\n");
+    assert!(
+        stderr_joined.contains("whisper: GPU backend selected"),
+        "expected GPU backend selection, got: {stderr_joined}"
+    );
+    Ok(())
+}
+
+#[test]
+fn at07_cpu_fallback() -> Result<(), Box<dyn Error>> {
+    if env::var("SV_HARDWARE_TESTS").ok().as_deref() != Some("1")
+        || env::var("SV_CPU_TESTS").ok().as_deref() != Some("1")
+    {
+        eprintln!("Skipping AT-07 CPU check; set SV_HARDWARE_TESTS=1 and SV_CPU_TESTS=1 to run.");
+        return Ok(());
+    }
+
+    let model_path = model_path()?;
+    if !model_path.exists() {
+        eprintln!(
+            "Skipping AT-07 CPU check; model file not found at {}",
+            model_path.display()
+        );
+        return Ok(());
+    }
+
+    let config_home = temp_dir("soundvibes-acceptance-config");
+    let runtime_dir = temp_dir("soundvibes-acceptance-runtime");
+    write_config(
+        &config_home,
+        &format!("model = \"{}\"\n", model_path.display()),
+    )?;
+
+    let stderr_lines = run_daemon_for_logs(&config_home, &runtime_dir)?;
+    let stderr_joined = stderr_lines.join("\n");
+    assert!(
+        stderr_joined.contains("using CPU"),
+        "expected CPU fallback message, got: {stderr_joined}"
+    );
+    Ok(())
+}
+
 fn model_path() -> Result<PathBuf, Box<dyn Error>> {
     if let Ok(path) = env::var("SV_MODEL_PATH") {
         return Ok(PathBuf::from(path));
@@ -384,4 +452,49 @@ fn stop_daemon(child: &mut std::process::Child) -> Result<(), Box<dyn Error>> {
         .status();
     let _ = child.wait();
     Err("daemon did not terminate after SIGTERM".into())
+}
+
+fn run_daemon_for_logs(
+    config_home: &PathBuf,
+    runtime_dir: &PathBuf,
+) -> Result<Vec<String>, Box<dyn Error>> {
+    let binary = env!("CARGO_BIN_EXE_sv");
+    let mut child = Command::new(binary)
+        .arg("--daemon")
+        .env("XDG_CONFIG_HOME", config_home)
+        .env("XDG_RUNTIME_DIR", runtime_dir)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    let stdout = child.stdout.take().expect("stdout pipe");
+    let stderr = child.stderr.take().expect("stderr pipe");
+    let (ready_tx, ready_rx) = mpsc::channel();
+    let stderr_lines = Arc::new(Mutex::new(Vec::new()));
+    let stderr_capture = Arc::clone(&stderr_lines);
+
+    let stdout_thread = thread::spawn(move || {
+        let reader = BufReader::new(stdout);
+        for line in reader.lines().flatten() {
+            if line.contains("Daemon listening on") {
+                let _ = ready_tx.send(line);
+                break;
+            }
+        }
+    });
+
+    let stderr_thread = thread::spawn(move || {
+        let reader = BufReader::new(stderr);
+        for line in reader.lines().flatten() {
+            stderr_capture.lock().expect("stderr lock").push(line);
+        }
+    });
+
+    wait_for_daemon_ready(&mut child, ready_rx)?;
+    stop_daemon(&mut child)?;
+    let _ = stdout_thread.join();
+    let _ = stderr_thread.join();
+
+    let collected = stderr_lines.lock().expect("stderr lock").clone();
+    Ok(collected)
 }
