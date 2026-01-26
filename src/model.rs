@@ -140,6 +140,8 @@ fn download_model(path: &Path, spec: &ModelSpec) -> Result<(), AppError> {
     let base = env::var("SV_MODEL_BASE_URL").unwrap_or_else(|_| DEFAULT_MODEL_BASE_URL.to_string());
     let url = format!("{}/{}", base.trim_end_matches('/'), filename);
 
+    println!("Downloading model {filename} from {url}...");
+
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|err| {
             AppError::config(format!(
