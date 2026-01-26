@@ -14,6 +14,8 @@ These tests validate the product behavior for the offline Linux CLI.
 - Hardware-dependent tests should be guarded with opt-in env vars:
   - `SV_MODEL_PATH` to point at a local model file for transcription tests.
   - `SV_HARDWARE_TESTS=1` to opt into microphone/GPU checks.
+- Automated acceptance tests live in `tests/acceptance.rs` and should map to the AT-xx entries below.
+- Run automated acceptance tests with `cargo test --test acceptance` (add `--features test-support` when using mocks).
 
 ## Tests
 
@@ -23,8 +25,14 @@ These tests validate the product behavior for the offline Linux CLI.
 - Expect: process starts, listens on socket, no error output.
 - Pass: exit code is `0` after user stops the process.
 
+### AT-01a: Missing model is auto-downloaded
+- Setup: remove `${XDG_DATA_HOME:-~/.local/share}/soundvibes/models/ggml-base.en.bin`, set `model_size` to `auto`.
+- Command: `sv --daemon`
+- Expect: model download occurs before startup completes.
+- Pass: model file exists at the default location and daemon starts.
+
 ### AT-02: Missing model returns error
-- Setup: set `model` in config to `${XDG_DATA_HOME:-~/.local/share}/soundvibes/models/missing.bin`.
+- Setup: set `model` in config to `${XDG_DATA_HOME:-~/.local/share}/soundvibes/models/missing.bin` and disable download.
 - Command: `sv --daemon`
 - Expect: error message indicating missing model.
 - Pass: exit code is `2`.

@@ -4,7 +4,7 @@
 This document describes the technical design for the `sv` CLI that performs offline, start/stop voice-to-text on Linux using whisper.cpp with a small quantized model.
 
 ## Goals
-- Single binary plus local model file.
+- Single binary plus automatic model download to a local path.
 - Start/stop capture with transcription after capture stops.
 - Best-effort latency on CPU.
 - Support daemon mode with socket-based control and text injection at the cursor.
@@ -28,6 +28,8 @@ This document describes the technical design for the `sv` CLI that performs offl
 - Defaults are applied if keys are missing.
 - Configuration struct shared across pipeline components.
 - Add `mode` to select `stdout` (default) or `inject` for daemon output.
+- Config supports `language` and `model_size` selection with `auto` mapping to the general model.
+- Allow overriding the model install path (`model_path`) while keeping a default data directory.
 
 ### Audio Capture
 - Use `cpal` to select input device and stream 16 kHz mono.
@@ -62,10 +64,15 @@ This document describes the technical design for the `sv` CLI that performs offl
 
 ### Inference Engine
 - whisper.cpp bound via Rust FFI.
-- Load ggml model at startup.
+- Ensure the configured ggml model is downloaded before loading at startup.
 - Run inference on captured audio and return a final transcript.
 - Use a small quantized model for CPU speed.
 - Attempt GPU acceleration automatically; fall back to CPU when no supported GPU backend is detected.
+
+### Model Download
+- On `sv`/`sv --daemon` startup, check for the configured model in the default data directory.
+- Download the ggml model if missing, based on `language` and `model_size` config.
+- If `model_path` is provided, download or resolve the model there instead of the default location.
 
 ### GPU Backend Selection
 - Build whisper.cpp with GPU backends enabled (Vulkan for AMD/NVIDIA, CUDA for NVIDIA when available).

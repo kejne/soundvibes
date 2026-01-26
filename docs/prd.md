@@ -10,7 +10,7 @@ This PRD is a living document and should be updated as product requirements and 
 - Work fully offline with a small model and fast post-recording transcription.
 - Run as a background daemon that listens for control commands over a local socket.
 - Use the same binary: `sv --daemon` runs the service, `sv` toggles capture via the socket.
-- Ship as a single Rust CLI binary plus a bundled model file.
+- Ship as a single Rust CLI binary plus an automatically downloaded model file.
 - Automatically accelerate inference on NVIDIA/AMD GPUs when available, otherwise fall back to CPU.
 
 ## Target Users
@@ -64,7 +64,7 @@ This PRD is a living document and should be updated as product requirements and 
 ## Model Choice
 - Engine: whisper.cpp (FFI) for best accuracy-to-size tradeoff.
 - Initial model: tiny/base quantized (ggml).
-- Model is bundled and loaded from a local path.
+- Model is downloaded on demand to a default location and loaded locally.
 
 ## Performance Assumptions
 - Best-effort latency on CPU for a small model.
@@ -74,14 +74,14 @@ This PRD is a living document and should be updated as product requirements and 
 
 ## Packaging & Distribution
 - Single compiled Rust binary.
-- Bundle model file alongside the binary.
+- Download model file to a default data directory on first use.
 - Provide a simple tarball release for Linux.
 
 ## Configuration
 - Load config from XDG base directory if available.
 - Default path: `${XDG_CONFIG_HOME:-~/.config}/soundvibes/config.toml`.
 - Config file format: TOML.
-- Config keys: `model`, `language`, `device`, `sample_rate`, `format`, `vad`, `mode`.
+- Config keys: `model`, `language`, `device`, `sample_rate`, `format`, `vad`, `mode`, `model_path`.
 
 ## Validation Plan
 - Manual test on Linux laptop with default microphone.

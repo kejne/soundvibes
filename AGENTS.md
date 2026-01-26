@@ -4,8 +4,6 @@ This repository is a Rust CLI app for offline speech-to-text on Linux. Use these
 
 ## Source-of-Truth Rules
 
-- No Cursor rules found in `.cursor/rules/` or `.cursorrules`.
-- No GitHub Copilot instructions found in `.github/copilot-instructions.md`.
 - Follow these instructions plus any user-provided requirements.
 
 ## Issue Tracking (bd/beads)
@@ -26,6 +24,8 @@ Quick reference:
 - Prefer automated tests over manual steps whenever possible.
 - Keep tests deterministic and fast; skip gracefully when external files are missing.
 - Call out any gaps when tests cannot be written (e.g., hardware-dependent flows).
+- For new functionality, add or extend an automated acceptance test and run it as part of validation.
+- Automated acceptance criteria live in `docs/acceptance-tests.md` and must map to tests in `tests/acceptance.rs`.
 
 ## Build / Run / Lint / Test
 
@@ -51,6 +51,9 @@ Tests:
 - `cargo test transcribes_sample_audio` (single test by name)
 - `cargo test --test whisper_integration` (single integration test file)
 - `SV_MODEL_PATH=... cargo test --test whisper_integration` (override model path)
+- `cargo test --test acceptance` (automated acceptance tests)
+- `cargo test --test acceptance --features test-support` (acceptance tests using test support mocks)
+- `SV_HARDWARE_TESTS=1 cargo test --test acceptance` (hardware acceptance tests)
 
 Formatting / linting:
 - `cargo fmt`

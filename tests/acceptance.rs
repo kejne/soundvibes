@@ -1,3 +1,5 @@
+// Automated acceptance tests for docs/acceptance-tests.md.
+// Keep AT-xx mappings in sync with the documentation.
 use std::env;
 use std::error::Error;
 use std::fs;
