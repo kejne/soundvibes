@@ -5,6 +5,7 @@ edition = "2021"
 
 [features]
 default = ["vulkan"]
+test-support = []
 vulkan = []
 
 [dependencies]
