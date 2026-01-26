@@ -26,11 +26,9 @@ fn at01_daemon_starts_with_valid_model() -> Result<(), Box<dyn Error>> {
 
     let config_home = temp_dir("soundvibes-acceptance-config");
     let runtime_dir = temp_dir("soundvibes-acceptance-runtime");
-    let config_path = config_home.join("soundvibes").join("config.toml");
-    fs::create_dir_all(config_path.parent().expect("config parent"))?;
-    fs::write(
-        &config_path,
-        format!("model = \"{}\"\n", model_path.display()),
+    write_config(
+        &config_home,
+        &format!("model = \"{}\"\n", model_path.display()),
     )?;
 
     let binary = env!("CARGO_BIN_EXE_sv");
@@ -61,6 +59,33 @@ fn at01_daemon_starts_with_valid_model() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+#[test]
+fn at02_missing_model_returns_exit_code_2() -> Result<(), Box<dyn Error>> {
+    let config_home = temp_dir("soundvibes-acceptance-config");
+    let runtime_dir = temp_dir("soundvibes-acceptance-runtime");
+    let missing_path = temp_dir("soundvibes-missing-model").join("missing.bin");
+    write_config(
+        &config_home,
+        &format!("model = \"{}\"\n", missing_path.display()),
+    )?;
+
+    let binary = env!("CARGO_BIN_EXE_sv");
+    let output = Command::new(binary)
+        .arg("--daemon")
+        .env("XDG_CONFIG_HOME", &config_home)
+        .env("XDG_RUNTIME_DIR", &runtime_dir)
+        .output()?;
+
+    let status = output.status.code().unwrap_or(-1);
+    assert_eq!(status, 2, "expected exit code 2, got {status}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("model file not found"),
+        "expected missing model error, got: {stderr}"
+    );
+    Ok(())
+}
+
 fn model_path() -> Result<PathBuf, Box<dyn Error>> {
     if let Ok(path) = env::var("SV_MODEL_PATH") {
         return Ok(PathBuf::from(path));
@@ -83,6 +108,13 @@ fn temp_dir(prefix: &str) -> PathBuf {
         .as_nanos();
     dir.push(format!("{prefix}-{}-{stamp}", std::process::id()));
     dir
+}
+
+fn write_config(config_home: &PathBuf, contents: &str) -> Result<(), Box<dyn Error>> {
+    let config_path = config_home.join("soundvibes").join("config.toml");
+    fs::create_dir_all(config_path.parent().expect("config parent"))?;
+    fs::write(&config_path, contents)?;
+    Ok(())
 }
 
 fn wait_for_daemon_ready(
