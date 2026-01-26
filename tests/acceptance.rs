@@ -2,8 +2,11 @@
 // Keep AT-xx mappings in sync with the documentation.
 use std::env;
 use std::error::Error;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::{BufRead, BufReader};
+use std::io::{Read, Write};
+use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
@@ -79,13 +82,35 @@ fn at01_daemon_starts_with_valid_model() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn at01a_missing_model_is_auto_downloaded() -> Result<(), Box<dyn Error>> {
+    let data_home = temp_dir("soundvibes-acceptance-data");
+    let _data_guard = EnvGuard::set("XDG_DATA_HOME", &data_home);
+    let payload = b"soundvibes-test-model".to_vec();
+    let (base_url, server_handle) = start_test_server(payload.clone())?;
+    let _url_guard = EnvGuard::set("SV_MODEL_BASE_URL", &base_url);
+
+    let spec = sv::model::ModelSpec::new(sv::model::ModelSize::Auto, sv::model::ModelLanguage::En);
+    let prepared = sv::model::prepare_model(None, &spec, true)?;
+
+    assert!(prepared.downloaded, "expected model download");
+    assert!(prepared.path.exists(), "expected model file to exist");
+    let stored = fs::read(&prepared.path)?;
+    assert_eq!(stored, payload, "downloaded model bytes mismatch");
+    let _ = server_handle.join();
+    Ok(())
+}
+
+#[test]
 fn at02_missing_model_returns_exit_code_2() -> Result<(), Box<dyn Error>> {
     let config_home = temp_dir("soundvibes-acceptance-config");
     let runtime_dir = temp_dir("soundvibes-acceptance-runtime");
     let missing_path = temp_dir("soundvibes-missing-model").join("missing.bin");
     write_config(
         &config_home,
-        &format!("model = \"{}\"\n", missing_path.display()),
+        &format!(
+            "model = \"{}\"\ndownload_model = false\n",
+            missing_path.display()
+        ),
     )?;
 
     let binary = env!("CARGO_BIN_EXE_sv");
@@ -395,6 +420,46 @@ fn temp_dir(prefix: &str) -> PathBuf {
         .as_nanos();
     dir.push(format!("{prefix}-{}-{stamp}", std::process::id()));
     dir
+}
+
+struct EnvGuard {
+    key: &'static str,
+    previous: Option<OsString>,
+}
+
+impl EnvGuard {
+    fn set(key: &'static str, value: impl AsRef<OsStr>) -> Self {
+        let previous = env::var_os(key);
+        env::set_var(key, value);
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        match &self.previous {
+            Some(value) => env::set_var(self.key, value),
+            None => env::remove_var(self.key),
+        }
+    }
+}
+
+fn start_test_server(payload: Vec<u8>) -> Result<(String, thread::JoinHandle<()>), Box<dyn Error>> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let addr = listener.local_addr()?;
+    let handle = thread::spawn(move || {
+        if let Ok((mut stream, _)) = listener.accept() {
+            let mut buffer = [0u8; 1024];
+            let _ = stream.read(&mut buffer);
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n",
+                payload.len()
+            );
+            let _ = stream.write_all(response.as_bytes());
+            let _ = stream.write_all(&payload);
+        }
+    });
+    Ok((format!("http://{addr}"), handle))
 }
 
 fn write_config(config_home: &PathBuf, contents: &str) -> Result<(), Box<dyn Error>> {

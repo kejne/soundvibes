@@ -3,11 +3,12 @@ use clap::{CommandFactory, FromArgMatches, Parser};
 use serde::Deserialize;
 use std::env;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process;
 use sv::audio;
 use sv::daemon;
 use sv::error::AppError;
+use sv::model::{ModelLanguage, ModelSize, ModelSpec};
 use sv::types::{AudioHost, OutputFormat, OutputMode, VadMode, VadSetting};
 
 #[derive(Parser, Debug)]
@@ -15,6 +16,12 @@ use sv::types::{AudioHost, OutputFormat, OutputMode, VadMode, VadSetting};
 struct Cli {
     #[arg(long, value_name = "PATH")]
     model: Option<PathBuf>,
+
+    #[arg(long, default_value = "auto", value_name = "SIZE")]
+    model_size: ModelSize,
+
+    #[arg(long, default_value = "en", value_name = "LANG")]
+    model_language: ModelLanguage,
 
     #[arg(long, default_value = "en", value_name = "CODE")]
     language: String,
@@ -58,6 +65,9 @@ struct Cli {
     #[arg(long, default_value_t = false)]
     dump_audio: bool,
 
+    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+    download_model: bool,
+
     #[arg(long, default_value_t = false)]
     daemon: bool,
 }
@@ -65,6 +75,9 @@ struct Cli {
 #[derive(Debug, Clone)]
 struct Config {
     model_path: Option<PathBuf>,
+    model_size: ModelSize,
+    model_language: ModelLanguage,
+    download_model: bool,
     language: String,
     device: Option<String>,
     audio_host: AudioHost,
@@ -88,6 +101,19 @@ impl Config {
         } else {
             file.language.unwrap_or(cli.language)
         };
+
+        let model_size = if matches.value_source("model_size") == Some(ValueSource::CommandLine) {
+            cli.model_size
+        } else {
+            file.model_size.unwrap_or(cli.model_size)
+        };
+
+        let model_language =
+            if matches.value_source("model_language") == Some(ValueSource::CommandLine) {
+                cli.model_language
+            } else {
+                file.model_language.unwrap_or(cli.model_language)
+            };
 
         let device = if matches.value_source("device") == Some(ValueSource::CommandLine) {
             cli.device
@@ -174,15 +200,25 @@ impl Config {
             file.dump_audio.unwrap_or(cli.dump_audio)
         };
 
+        let download_model =
+            if matches.value_source("download_model") == Some(ValueSource::CommandLine) {
+                cli.download_model
+            } else {
+                file.download_model.unwrap_or(cli.download_model)
+            };
+
+        let file_model_path = file.model_path.or(file.model);
         let model_path = if matches.value_source("model") == Some(ValueSource::CommandLine) {
             cli.model
         } else {
-            file.model.or(cli.model)
-        }
-        .or_else(|| Some(default_model_path()));
+            cli.model.or(file_model_path)
+        };
 
         Self {
             model_path,
+            model_size,
+            model_language,
+            download_model,
             language,
             device,
             audio_host,
@@ -205,6 +241,10 @@ impl Config {
 #[serde(default)]
 struct FileConfig {
     model: Option<PathBuf>,
+    model_path: Option<PathBuf>,
+    model_size: Option<ModelSize>,
+    model_language: Option<ModelLanguage>,
+    download_model: Option<bool>,
     language: Option<String>,
     device: Option<String>,
     audio_host: Option<AudioHost>,
@@ -240,18 +280,25 @@ fn main() {
     };
     let config = Config::from_sources(cli, &matches, file_config);
 
-    if !config.list_devices {
-        if let Some(model_path) = &config.model_path {
-            if let Err(err) = validate_model_path(model_path) {
+    let prepared_model = if config.list_devices {
+        None
+    } else {
+        let spec = ModelSpec::new(config.model_size, config.model_language);
+        match sv::model::prepare_model(config.model_path.as_deref(), &spec, config.download_model) {
+            Ok(prepared) => Some(prepared),
+            Err(err) => {
                 eprintln!("error: {err}");
                 process::exit(err.exit_code());
             }
         }
-    }
+    };
 
     println!("SoundVibes sv {}", env!("CARGO_PKG_VERSION"));
-    if let Some(model_path) = &config.model_path {
-        println!("Model: {}", model_path.display());
+    if let Some(prepared) = &prepared_model {
+        if prepared.downloaded {
+            println!("Model download complete.");
+        }
+        println!("Model: {}", prepared.path.display());
     }
     println!("Language: {}", config.language);
     println!("Sample rate: {} Hz", config.sample_rate);
@@ -270,8 +317,11 @@ fn main() {
     let result = if config.list_devices {
         run_list_devices(&config)
     } else {
+        let model_path = prepared_model
+            .as_ref()
+            .map(|prepared| prepared.path.clone());
         let daemon_config = daemon::DaemonConfig {
-            model_path: config.model_path.clone(),
+            model_path,
             language: config.language.clone(),
             device: config.device.clone(),
             audio_host: config.audio_host,
@@ -328,17 +378,6 @@ fn config_path() -> Option<PathBuf> {
     Some(config_home.join("soundvibes").join("config.toml"))
 }
 
-fn default_model_path() -> PathBuf {
-    let data_home = env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))
-        .unwrap_or_else(|| PathBuf::from("/tmp"));
-    data_home
-        .join("soundvibes")
-        .join("models")
-        .join("ggml-base.en.bin")
-}
-
 fn run_list_devices(config: &Config) -> Result<(), AppError> {
     let host = daemon::select_audio_host(config.audio_host)?;
     audio::configure_alsa_logging(config.debug_audio);
@@ -350,25 +389,10 @@ fn run_list_devices(config: &Config) -> Result<(), AppError> {
     Ok(())
 }
 
-fn validate_model_path(path: &Path) -> Result<(), AppError> {
-    if !path.exists() {
-        return Err(AppError::config(format!(
-            "model file not found at {}",
-            path.display()
-        )));
-    }
-    if !path.is_file() {
-        return Err(AppError::config(format!(
-            "model path is not a file: {}",
-            path.display()
-        )));
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
     use std::sync::{Mutex, OnceLock};
     use std::time::Duration;
 

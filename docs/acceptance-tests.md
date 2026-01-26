@@ -32,7 +32,7 @@ These tests validate the product behavior for the offline Linux CLI.
 - Pass: model file exists at the default location and daemon starts.
 
 ### AT-02: Missing model returns error
-- Setup: set `model` in config to `${XDG_DATA_HOME:-~/.local/share}/soundvibes/models/missing.bin` and disable download.
+- Setup: set `model` in config to `${XDG_DATA_HOME:-~/.local/share}/soundvibes/models/missing.bin` and set `download_model = false`.
 - Command: `sv --daemon`
 - Expect: error message indicating missing model.
 - Pass: exit code is `2`.

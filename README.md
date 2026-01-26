@@ -23,7 +23,7 @@ or build CPU-only with `cargo build --no-default-features`.
   - GPU ICD: `sudo dnf install -y mesa-vulkan-drivers` (AMD/Intel) or `sudo dnf install -y akmod-nvidia`
 
 ## Model Setup
-Download a whisper.cpp ggml model to the XDG data directory.
+`sv` will download the configured whisper.cpp ggml model automatically if it is missing.
 
 Example (base English model):
 
@@ -52,6 +52,9 @@ Create a config file at `${XDG_CONFIG_HOME:-~/.config}/soundvibes/config.toml`.
 
 ```toml
 model = "/home/you/.local/share/soundvibes/models/ggml-base.en.bin"
+model_size = "auto"
+model_language = "en"
+download_model = true
 language = "auto"
 device = "default"
 sample_rate = 16000
@@ -60,7 +63,9 @@ vad = false
 mode = "inject"
 ```
 
-If `model` is omitted, `sv` defaults to `${XDG_DATA_HOME:-~/.local/share}/soundvibes/models/ggml-base.en.bin`.
+If `model` is omitted, `sv` builds a default model path under
+`${XDG_DATA_HOME:-~/.local/share}/soundvibes/models/` based on `model_size` and
+`model_language`.
 
 ## Usage
 ```bash
