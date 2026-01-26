@@ -152,8 +152,14 @@ pub fn run_daemon_loop(
         .list_input_devices(&host)
         .map_err(|err| AppError::audio(err.message))?;
     output.stdout("Input devices:");
-    for name in devices {
+    for name in &devices {
         output.stdout(&format!("  - {name}"));
+    }
+
+    if let Some(device) = config.device.as_deref() {
+        if !devices.iter().any(|name| name.eq_ignore_ascii_case(device)) {
+            return Err(AppError::audio(format!("input device not found: {device}")));
+        }
     }
 
     let mut transcriber = deps
@@ -207,7 +213,7 @@ pub fn run_daemon_loop(
                         .start_capture(&host, config.device.as_deref(), config.sample_rate)
                         .map_err(|err| match err.kind {
                             audio::AudioErrorKind::DeviceNotFound if config.device.is_some() => {
-                                AppError::config(err.message)
+                                AppError::audio(err.message)
                             }
                             _ => AppError::audio(err.message),
                         })?;

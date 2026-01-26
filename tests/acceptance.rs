@@ -86,6 +86,49 @@ fn at02_missing_model_returns_exit_code_2() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+#[test]
+fn at03_invalid_input_device_returns_exit_code_3() -> Result<(), Box<dyn Error>> {
+    if env::var("SV_HARDWARE_TESTS").ok().as_deref() != Some("1") {
+        eprintln!("Skipping AT-03; set SV_HARDWARE_TESTS=1 to run.");
+        return Ok(());
+    }
+
+    let model_path = model_path()?;
+    if !model_path.exists() {
+        eprintln!(
+            "Skipping AT-03; model file not found at {}",
+            model_path.display()
+        );
+        return Ok(());
+    }
+
+    let config_home = temp_dir("soundvibes-acceptance-config");
+    let runtime_dir = temp_dir("soundvibes-acceptance-runtime");
+    write_config(
+        &config_home,
+        &format!(
+            "model = \"{}\"\ndevice = \"nonexistent\"\n",
+            model_path.display()
+        ),
+    )?;
+
+    let binary = env!("CARGO_BIN_EXE_sv");
+    let output = Command::new(binary)
+        .arg("--daemon")
+        .env("XDG_CONFIG_HOME", &config_home)
+        .env("XDG_RUNTIME_DIR", &runtime_dir)
+        .output()?;
+
+    let status = output.status.code().unwrap_or(-1);
+    assert_eq!(status, 3, "expected exit code 3, got {status}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("input device not found"),
+        "expected device error, got: {stderr}"
+    );
+    Ok(())
+}
+
 fn model_path() -> Result<PathBuf, Box<dyn Error>> {
     if let Ok(path) = env::var("SV_MODEL_PATH") {
         return Ok(PathBuf::from(path));
