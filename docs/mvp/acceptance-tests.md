@@ -9,6 +9,12 @@ These tests validate the MVP behavior for the offline Linux CLI.
 - No network required.
 - If available, a machine with a supported NVIDIA/AMD GPU for GPU-acceleration checks.
 
+## Automation notes
+- Harness helpers live under `sv::daemon::test_support` and require `cargo test --features test-support`.
+- Hardware-dependent tests should be guarded with opt-in env vars:
+  - `SV_MODEL_PATH` to point at a local model file for transcription tests.
+  - `SV_HARDWARE_TESTS=1` to opt into microphone/GPU checks.
+
 ## Tests
 
 ### AT-01: CLI starts with valid model
