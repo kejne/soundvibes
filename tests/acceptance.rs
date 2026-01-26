@@ -251,6 +251,58 @@ fn at05_jsonl_output_formatting() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+#[test]
+fn at06_offline_operation() -> Result<(), Box<dyn Error>> {
+    if env::var("SV_HARDWARE_TESTS").ok().as_deref() != Some("1")
+        || env::var("SV_OFFLINE_TESTS").ok().as_deref() != Some("1")
+    {
+        eprintln!("Skipping AT-06; set SV_HARDWARE_TESTS=1 and SV_OFFLINE_TESTS=1 to run.");
+        return Ok(());
+    }
+
+    let model_path = model_path()?;
+    if !model_path.exists() {
+        eprintln!(
+            "Skipping AT-06; model file not found at {}",
+            model_path.display()
+        );
+        return Ok(());
+    }
+
+    let config_home = temp_dir("soundvibes-acceptance-config");
+    let runtime_dir = temp_dir("soundvibes-acceptance-runtime");
+    write_config(
+        &config_home,
+        &format!("model = \"{}\"\n", model_path.display()),
+    )?;
+
+    let binary = env!("CARGO_BIN_EXE_sv");
+    let mut child = Command::new(binary)
+        .arg("--daemon")
+        .env("XDG_CONFIG_HOME", &config_home)
+        .env("XDG_RUNTIME_DIR", &runtime_dir)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    let stdout = child.stdout.take().expect("stdout pipe");
+    let (ready_tx, ready_rx) = mpsc::channel();
+    let reader_thread = thread::spawn(move || {
+        let reader = BufReader::new(stdout);
+        for line in reader.lines().flatten() {
+            if line.contains("Daemon listening on") {
+                let _ = ready_tx.send(line);
+                break;
+            }
+        }
+    });
+
+    wait_for_daemon_ready(&mut child, ready_rx)?;
+    stop_daemon(&mut child)?;
+    let _ = reader_thread.join();
+    Ok(())
+}
+
 fn model_path() -> Result<PathBuf, Box<dyn Error>> {
     if let Ok(path) = env::var("SV_MODEL_PATH") {
         return Ok(PathBuf::from(path));
