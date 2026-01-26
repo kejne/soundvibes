@@ -8,6 +8,20 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+#[cfg(feature = "test-support")]
+use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(feature = "test-support")]
+use std::sync::Arc;
+
+#[cfg(feature = "test-support")]
+use sv::daemon::test_support::{
+    control_channel, TestAudioBackend, TestOutput, TestTranscriberFactory,
+};
+#[cfg(feature = "test-support")]
+use sv::daemon::{DaemonConfig, DaemonDeps};
+#[cfg(feature = "test-support")]
+use sv::types::{AudioHost, OutputFormat, OutputMode, VadMode};
+
 #[test]
 fn at01_daemon_starts_with_valid_model() -> Result<(), Box<dyn Error>> {
     if env::var("SV_HARDWARE_TESTS").ok().as_deref() != Some("1") {
@@ -126,6 +140,55 @@ fn at03_invalid_input_device_returns_exit_code_3() -> Result<(), Box<dyn Error>>
         stderr.contains("input device not found"),
         "expected device error, got: {stderr}"
     );
+    Ok(())
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn at04_daemon_toggle_captures_and_transcribes() -> Result<(), Box<dyn Error>> {
+    let (sender, receiver) = control_channel();
+    let control_sender = sender.clone();
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let mut output = TestOutput::default();
+    let deps = DaemonDeps {
+        audio: Box::new(TestAudioBackend::new(
+            vec!["Mic".to_string()],
+            vec![vec![0.2; 160]],
+        )),
+        transcriber_factory: Box::new(TestTranscriberFactory::new(vec!["hello".to_string()])),
+    };
+    let config = DaemonConfig {
+        model_path: None,
+        language: "en".to_string(),
+        device: None,
+        audio_host: AudioHost::Default,
+        sample_rate: 16_000,
+        format: OutputFormat::Plain,
+        mode: OutputMode::Stdout,
+        vad: VadMode::Off,
+        vad_silence_ms: 800,
+        vad_threshold: 0.015,
+        vad_chunk_ms: 250,
+        debug_audio: false,
+        debug_vad: false,
+        dump_audio: false,
+    };
+
+    let shutdown_trigger = Arc::clone(&shutdown);
+    let control_thread = thread::spawn(move || {
+        let _ = control_sender.send(sv::daemon::ControlEvent::Toggle);
+        let _ = control_sender.send(sv::daemon::ControlEvent::Toggle);
+        thread::sleep(Duration::from_millis(50));
+        shutdown_trigger.store(true, Ordering::Relaxed);
+    });
+
+    sv::daemon::run_daemon_loop(&config, &deps, &mut output, receiver, shutdown.as_ref())?;
+    control_thread.join().expect("control thread failed");
+
+    assert!(output
+        .stdout_lines()
+        .iter()
+        .any(|line| line.contains("Transcript 1: hello")));
     Ok(())
 }
 
