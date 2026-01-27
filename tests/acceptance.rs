@@ -102,6 +102,24 @@ fn at01a_missing_model_is_auto_downloaded() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn at01b_language_selects_model_variant() -> Result<(), Box<dyn Error>> {
+    let english = sv::model::model_language_for_transcription("en");
+    let auto = sv::model::model_language_for_transcription("auto");
+    let other = sv::model::model_language_for_transcription("es");
+
+    assert_eq!(english, sv::model::ModelLanguage::En);
+    assert_eq!(auto, sv::model::ModelLanguage::Auto);
+    assert_eq!(other, sv::model::ModelLanguage::Auto);
+
+    let english_spec = sv::model::ModelSpec::new(sv::model::ModelSize::Small, english);
+    let auto_spec = sv::model::ModelSpec::new(sv::model::ModelSize::Small, auto);
+
+    assert!(english_spec.filename().contains(".en."));
+    assert!(!auto_spec.filename().contains(".en."));
+    Ok(())
+}
+
+#[test]
 fn at02_missing_model_returns_exit_code_2() -> Result<(), Box<dyn Error>> {
     let config_home = temp_dir("soundvibes-acceptance-config");
     let runtime_dir = temp_dir("soundvibes-acceptance-runtime");

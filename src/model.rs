@@ -9,7 +9,7 @@ use crate::error::AppError;
 
 const DEFAULT_MODEL_BASE_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
 
-#[derive(Debug, Copy, Clone, ValueEnum, Deserialize)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, ValueEnum, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ModelSize {
     Auto,
@@ -40,11 +40,21 @@ impl ModelSize {
     }
 }
 
-#[derive(Debug, Copy, Clone, ValueEnum, Deserialize)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, ValueEnum, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ModelLanguage {
     Auto,
     En,
+}
+
+pub fn model_language_for_transcription(language: &str) -> ModelLanguage {
+    if language.eq_ignore_ascii_case("auto") {
+        ModelLanguage::Auto
+    } else if language.eq_ignore_ascii_case("en") {
+        ModelLanguage::En
+    } else {
+        ModelLanguage::Auto
+    }
 }
 
 #[derive(Debug, Copy, Clone)]

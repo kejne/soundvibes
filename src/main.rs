@@ -8,7 +8,7 @@ use std::process;
 use sv::audio;
 use sv::daemon;
 use sv::error::AppError;
-use sv::model::{ModelLanguage, ModelSize, ModelSpec};
+use sv::model::{model_language_for_transcription, ModelLanguage, ModelSize, ModelSpec};
 use sv::types::{AudioHost, OutputFormat, OutputMode, VadMode, VadSetting};
 
 #[derive(Parser, Debug)]
@@ -108,12 +108,19 @@ impl Config {
             file.model_size.unwrap_or(cli.model_size)
         };
 
-        let model_language =
+        let (model_language, model_language_explicit) =
             if matches.value_source("model_language") == Some(ValueSource::CommandLine) {
-                cli.model_language
+                (cli.model_language, true)
+            } else if let Some(model_language) = file.model_language {
+                (model_language, true)
             } else {
-                file.model_language.unwrap_or(cli.model_language)
+                (cli.model_language, false)
             };
+        let model_language = if model_language_explicit {
+            model_language
+        } else {
+            model_language_for_transcription(&language)
+        };
 
         let device = if matches.value_source("device") == Some(ValueSource::CommandLine) {
             cli.device
