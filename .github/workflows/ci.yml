@@ -17,6 +17,10 @@ jobs:
           submodules: recursive
       - name: Install mise
         uses: jdx/mise-action@v2
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - name: Prepare build dependencies
         run: mise run prepare-dev
       - name: Run quality gates
