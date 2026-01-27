@@ -1,0 +1,31 @@
+name: release-binaries
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Build release binary
+        run: cargo build --release
+      - name: Package artifacts
+        run: |
+          mkdir -p dist
+          cp target/release/sv dist/sv
+          tar -czf dist/sv-linux-x86_64.tar.gz -C dist sv
+          (cd dist && sha256sum sv-linux-x86_64.tar.gz > sv-linux-x86_64.tar.gz.sha256)
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/sv-linux-x86_64.tar.gz
+            dist/sv-linux-x86_64.tar.gz.sha256
