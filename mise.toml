@@ -44,7 +44,7 @@ fi
 case "${ID}" in
   ubuntu|debian)
     sudo apt update
-    sudo apt install -y build-essential cmake pkg-config libasound2-dev libvulkan1 glslang-tools curl clang libclang-dev
+    sudo apt install -y build-essential cmake pkg-config libasound2-dev libvulkan1 libvulkan-dev glslang-tools curl clang libclang-dev
 
     sdk_base="${HOME}/.local/share/vulkan-sdk"
     sdk_version="${VULKAN_SDK_VERSION:-1.4.335.0}"
