@@ -12,6 +12,7 @@ This PRD is a living document and should be updated as product requirements and 
 - Use the same binary: `sv --daemon` runs the service, `sv` toggles capture via the socket.
 - Ship as a single Rust CLI binary plus an automatically downloaded model file.
 - Automatically accelerate inference on NVIDIA/AMD GPUs when available, otherwise fall back to CPU.
+- Enforce PR quality gates that match a single local command for tests and linting.
 
 ## Target Users
 - Linux developers and power users who want local voice-to-text.
@@ -76,6 +77,7 @@ This PRD is a living document and should be updated as product requirements and 
 - Single compiled Rust binary.
 - Download model file to a default data directory on first use.
 - Provide a simple tarball release for Linux.
+- Publish Linux release artifacts via GitHub Releases with checksums for automated download tooling.
 
 ## Configuration
 - Load config from XDG base directory if available.
@@ -89,6 +91,7 @@ This PRD is a living document and should be updated as product requirements and 
 - Confirm tool runs without network access.
 - Validate daemon socket toggle from the CLI.
 - Validate text injection into a focused editor.
+- Validate CI runs the same quality gate command as local development.
 
 ## Risks & Mitigations
 - CPU performance too slow: use smaller quantized model and VAD.

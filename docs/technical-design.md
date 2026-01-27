@@ -79,6 +79,19 @@ This document describes the technical design for the `sv` CLI that performs offl
 - Always enable GPU usage in runtime params; rely on whisper.cpp backend detection to select the first supported device.
 - Do not expose GPU selection to the user; if no GPU backend is available, inference continues on CPU.
 
+### Release Automation
+- GitHub Actions workflow triggers on release events (tagged releases).
+- Build the Linux x86_64 binary using `cargo build --release`.
+- Package artifacts as a tarball containing `sv` and a README/license if required.
+- Generate SHA256 checksums for release artifacts.
+- Attach artifacts and checksums to the GitHub Release for automated download tooling.
+
+### CI and Quality Gates
+- GitHub Actions workflow triggers on `pull_request` targeting `main`.
+- CI runs a single `mise` task that mirrors local quality gates.
+- The task should include Rust best practices: `cargo fmt --check`, `cargo clippy --all-targets --all-features`, `cargo test`, and `cargo build --release`.
+- CI fails on any gate failure; local developers can run the same task to reproduce.
+
 ### Output Formatting
 - `plain`: print final transcript after transcription completes.
 - `jsonl`: emit a JSON line with `type`, `text`, `timestamp`.
