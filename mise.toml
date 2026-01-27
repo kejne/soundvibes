@@ -17,9 +17,17 @@ run = "cargo run --"
 description = "Run sv with local model"
 run = "cargo run -- --model ./models/ggml-tiny.en.bin --debug-vad"
 
+[tasks.ci-quick]
+description = "Run quick CI quality gates"
+run = "cargo fmt --check && cargo clippy --all-targets --all-features"
+
+[tasks.ci-slow]
+description = "Run slow CI quality gates"
+run = "cargo test && cargo build --release"
+
 [tasks.ci]
-description = "Run CI quality gates"
-run = "cargo fmt --check && cargo clippy --all-targets --all-features && cargo test && cargo build --release"
+description = "Run full CI quality gates"
+run = "mise run ci-quick && mise run ci-slow"
 
 [tasks.prepare-dev]
 description = "Install build prerequisites based on OS"

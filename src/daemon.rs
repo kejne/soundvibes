@@ -162,7 +162,7 @@ pub fn run_daemon_loop(
         }
     }
 
-    let mut transcriber = deps
+    let transcriber = deps
         .transcriber_factory
         .load(config.model_path.as_deref())?;
     let vad = audio::VadConfig::new(
@@ -182,7 +182,7 @@ pub fn run_daemon_loop(
         if shutdown.load(Ordering::Relaxed) {
             if recording {
                 stop_recording(
-                    &mut *transcriber,
+                    &*transcriber,
                     config,
                     &vad,
                     &mut capture,
@@ -199,7 +199,7 @@ pub fn run_daemon_loop(
                 if recording {
                     recording = false;
                     stop_recording(
-                        &mut *transcriber,
+                        &*transcriber,
                         config,
                         &vad,
                         &mut capture,

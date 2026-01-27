@@ -17,5 +17,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y build-essential cmake pkg-config libasound2-dev libvulkan1 glslang-tools curl clang libclang-dev
       - name: Install mise
         uses: jdx/mise-action@v2
-      - name: Run quality gates
-        run: mise run ci
+      - name: Run quick quality gates
+        run: mise run ci-quick
+      - name: Run slow quality gates
+        run: mise run ci-slow

@@ -66,7 +66,7 @@ fn at01_daemon_starts_with_valid_model() -> Result<(), Box<dyn Error>> {
     let (ready_tx, ready_rx) = mpsc::channel();
     let reader_thread = thread::spawn(move || {
         let reader = BufReader::new(stdout);
-        for line in reader.lines().flatten() {
+        for line in reader.lines().map_while(Result::ok) {
             if line.contains("Daemon listening on") {
                 let _ = ready_tx.send(line);
                 break;
@@ -335,7 +335,7 @@ fn at06_offline_operation() -> Result<(), Box<dyn Error>> {
     let (ready_tx, ready_rx) = mpsc::channel();
     let reader_thread = thread::spawn(move || {
         let reader = BufReader::new(stdout);
-        for line in reader.lines().flatten() {
+        for line in reader.lines().map_while(Result::ok) {
             if line.contains("Daemon listening on") {
                 let _ = ready_tx.send(line);
                 break;
@@ -481,7 +481,7 @@ fn start_test_server(payload: Vec<u8>) -> Result<(String, thread::JoinHandle<()>
     Ok((format!("http://{addr}"), handle))
 }
 
-fn write_config(config_home: &PathBuf, contents: &str) -> Result<(), Box<dyn Error>> {
+fn write_config(config_home: &std::path::Path, contents: &str) -> Result<(), Box<dyn Error>> {
     let config_path = config_home.join("soundvibes").join("config.toml");
     fs::create_dir_all(config_path.parent().expect("config parent"))?;
     fs::write(&config_path, contents)?;
@@ -561,7 +561,7 @@ fn run_daemon_for_logs(
 
     let stdout_thread = thread::spawn(move || {
         let reader = BufReader::new(stdout);
-        for line in reader.lines().flatten() {
+        for line in reader.lines().map_while(Result::ok) {
             if line.contains("Daemon listening on") {
                 let _ = ready_tx.send(line);
                 break;
@@ -571,7 +571,7 @@ fn run_daemon_for_logs(
 
     let stderr_thread = thread::spawn(move || {
         let reader = BufReader::new(stderr);
-        for line in reader.lines().flatten() {
+        for line in reader.lines().map_while(Result::ok) {
             stderr_capture.lock().expect("stderr lock").push(line);
         }
     });

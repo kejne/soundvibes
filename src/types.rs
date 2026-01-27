@@ -26,7 +26,7 @@ impl AudioHost {
     pub fn default_for_platform() -> Self {
         #[cfg(target_os = "linux")]
         {
-            return AudioHost::Alsa;
+            AudioHost::Alsa
         }
         #[cfg(not(target_os = "linux"))]
         {

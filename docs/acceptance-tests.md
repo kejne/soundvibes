@@ -83,6 +83,6 @@ These tests validate the product behavior for the offline Linux CLI.
 
 ### AT-09: PR quality gates mirror local checks
 - Setup: open a pull request targeting `main`.
-- Command: `mise run ci` locally and the CI workflow for the PR.
+- Command: `mise run ci-quick` and `mise run ci-slow` locally (or `mise run ci`), plus the CI workflow for the PR.
 - Expect: the same set of checks run in both environments.
 - Pass: both local and CI runs complete successfully with matching steps.
