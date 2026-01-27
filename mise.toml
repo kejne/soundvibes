@@ -17,6 +17,10 @@ run = "cargo run --"
 description = "Run sv with local model"
 run = "cargo run -- --model ./models/ggml-tiny.en.bin --debug-vad"
 
+[tasks.ci]
+description = "Run CI quality gates"
+run = "cargo fmt --check && cargo clippy --all-targets --all-features && cargo test && cargo build --release"
+
 [tasks.prepare-dev]
 description = "Install build prerequisites based on OS"
 run = '''
