@@ -19,7 +19,5 @@ jobs:
         uses: jdx/mise-action@v2
       - name: Prepare build dependencies
         run: mise run prepare-dev
-      - name: Run quick quality gates
-        run: mise run ci-quick
-      - name: Run slow quality gates
-        run: mise run ci-slow
+      - name: Run quality gates
+        run: mise run ci
