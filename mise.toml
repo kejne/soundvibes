@@ -5,17 +5,9 @@ PATH = "{{ env.HOME }}/.local/share/vulkan-sdk/current/x86_64/bin:{{ env.PATH | 
 LD_LIBRARY_PATH = "{{ env.HOME }}/.local/share/vulkan-sdk/current/x86_64/lib:{{ env.LD_LIBRARY_PATH | default(value=\"\") }}"
 VK_LAYER_PATH = "{{ env.HOME }}/.local/share/vulkan-sdk/current/x86_64/etc/vulkan/explicit_layer.d:{{ env.VK_LAYER_PATH | default(value=\"\") }}"
 
-[tasks.download-model]
-description = "Download a whisper.cpp English model by size"
-run = "data_dir=${XDG_DATA_HOME:-$HOME/.local/share}/soundvibes/models && mkdir -p \"$data_dir\" && size=${SIZE:-base} && model=ggml-${size}.en.bin && curl -L -o \"$data_dir/${model}\" \"https://huggingface.co/ggerganov/whisper.cpp/resolve/main/${model}\""
-
 [tasks.run-local]
 description = "Run sv with local model"
 run = "cargo run --"
-
-[tasks.debug-local]
-description = "Run sv with local model"
-run = "cargo run -- --model ./models/ggml-tiny.en.bin --debug-vad"
 
 [tasks.ci]
 description = "Run full CI quality gates"

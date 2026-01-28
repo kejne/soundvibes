@@ -5,7 +5,8 @@ Offline voice-to-text CLI for Linux.
 ## Overview
 `sv` captures audio from your microphone using start/stop toggles and runs offline speech-to-text with a small whisper.cpp model. It aims for minimal runtime dependencies and ships as a single binary plus a local model file.
 
-## Requirements
+## Quick Start
+### 1) Requirements
 - Linux x86_64
 - Microphone input device
 
@@ -22,32 +23,23 @@ or build CPU-only with `cargo build --no-default-features`.
   - `sudo dnf install -y vulkan-headers vulkan-loader vulkan-validation-layers`
   - GPU ICD: `sudo dnf install -y mesa-vulkan-drivers` (AMD/Intel) or `sudo dnf install -y akmod-nvidia`
 
-## Model Setup
-`sv` will download the configured whisper.cpp ggml model automatically if it is missing.
+### 2) Install from GitHub Releases
+Download the latest Linux release from:
 
-Example (base English model):
+https://github.com/kejne/soundvibes/releases
 
-```bash
-data_dir="${XDG_DATA_HOME:-$HOME/.local/share}/soundvibes/models"
-mkdir -p "$data_dir"
-curl -L -o "$data_dir/ggml-base.en.bin" https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
-```
-
-Or use the mise task:
+Example (replace the version with the latest):
 
 ```bash
-mise run download-model
+curl -L -o soundvibes.tar.gz https://github.com/kejne/soundvibes/releases/download/v0.1.0/soundvibes-linux-x86_64.tar.gz
+tar -xzf soundvibes.tar.gz
+mkdir -p "$HOME/.local/bin"
+mv sv "$HOME/.local/bin/sv"
 ```
 
-Pick a size via `SIZE` (English models only):
+Make sure `~/.local/bin` is on your `PATH`.
 
-```bash
-SIZE=small mise run download-model
-```
-
-Available sizes: `tiny`, `base`, `small`, `medium`, `large`.
-
-## Configuration
+### 3) Configure
 Create a config file at `${XDG_CONFIG_HOME:-~/.config}/soundvibes/config.toml`.
 
 ```toml
@@ -67,16 +59,25 @@ If `model` is omitted, `sv` builds a default model path under
 `${XDG_DATA_HOME:-~/.local/share}/soundvibes/models/` based on `model_size` and
 `model_language` (defaults to the small general model).
 
-## Usage
+`sv` downloads the model automatically on first run if it is missing.
+
+### 4) Run
+Start the daemon:
+
 ```bash
 sv --daemon
 ```
 
-In another terminal:
+In another terminal, trigger a capture:
 
 ```bash
 sv
 ```
+
+## Environment Setup Tips
+- i3: add a keybinding to run `sv`, and let a user systemd service or `exec --no-startup-id sv --daemon` keep the daemon alive.
+- Hyprland: use `exec-once = sv --daemon` in `hyprland.conf`, plus `bind = SUPER, V, exec, sv` for capture.
+- GNOME: add a custom keyboard shortcut (Settings -> Keyboard -> View and Customize Shortcuts) with command `sv`, and use Startup Applications or a user systemd service for the daemon.
 
 ## Daemon Lifecycle
 Run `sv --daemon` in the foreground for quick tests, or use a user systemd service
@@ -89,7 +90,7 @@ Example user unit (`~/.config/systemd/user/sv.service`):
 Description=SoundVibes daemon
 
 [Service]
-ExecStart=%h/.cargo/bin/sv --daemon
+ExecStart=%h/.local/bin/sv --daemon
 Restart=on-failure
 
 [Install]
@@ -126,19 +127,5 @@ Set `mode = "inject"` in the config to inject text at the focused cursor.
 - Technical design: `docs/technical-design.md`
 - Acceptance tests: `docs/acceptance-tests.md`
 
-## Validation
-These steps align with `docs/acceptance-tests.md`.
-
-1. Ensure the model is downloaded (see Model Setup).
-2. Create a valid config file (see Configuration).
-3. Start the CLI:
-   ```bash
-   sv
-   ```
-4. Verify the missing-model behavior:
-   ```bash
-   sv
-   ```
-   Update `model` in the config to the missing path first.
-5. Run the remaining acceptance checks (device errors, JSONL output, offline mode)
-   as listed in `docs/acceptance-tests.md`.
+## Contributing
+See `CONTRIBUTING.md` for development setup, tests, and workflow.
