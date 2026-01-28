@@ -29,24 +29,14 @@ Quick reference:
 
 ## Build / Run / Lint / Test
 
-These commands are inferred from repo files and standard Rust conventions. Prefer these unless the user requests otherwise.
-
-Build:
-- `cargo build`
-- `cargo build --release`
-
-Run:
-- `cargo run --` (basic CLI)
-- `sv` (after install/build)
-- `sv --daemon` (daemon mode)
+Prefer mise tasks for build/run/test workflows unless the user requests otherwise.
 
 Mise tasks:
-- `mise run download-model` (downloads ggml model)
-- `SIZE=small mise run download-model` (pick model size)
-- `mise run run-local` (alias for `cargo run --`)
-- `mise run debug-local` (runs with local model + VAD debug)
+- `mise run prepare-dev` (install build prerequisites for your distro)
+- `mise run run-local` (run `sv` locally)
+- `mise run ci` (format, lint, tests, release build)
 
-Tests:
+Tests (specific variants):
 - `cargo test` (all tests)
 - `cargo test transcribes_sample_audio` (single test by name)
 - `cargo test --test whisper_integration` (single integration test file)
@@ -54,10 +44,6 @@ Tests:
 - `cargo test --test acceptance` (automated acceptance tests)
 - `cargo test --test acceptance --features test-support` (acceptance tests using test support mocks)
 - `SV_HARDWARE_TESTS=1 cargo test --test acceptance` (hardware acceptance tests)
-
-Formatting / linting:
-- `cargo fmt`
-- `cargo clippy --all-targets --all-features` (use when linting is requested)
 
 Validation plan requirement:
 - Always note which checks you ran or plan to run (tests, manual acceptance checks, etc.).
