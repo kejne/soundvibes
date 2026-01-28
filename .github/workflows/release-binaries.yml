@@ -15,17 +15,24 @@ jobs:
         uses: actions/checkout@v4
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - name: Build release binary
         run: cargo build --release
       - name: Package artifacts
         run: |
           mkdir -p dist
-          cp target/release/sv dist/sv
-          tar -czf dist/sv-linux-x86_64.tar.gz -C dist sv
+          cp target/release/sv dist/sv-linux-x86_64
+          tar -czf dist/sv-linux-x86_64.tar.gz -C dist sv-linux-x86_64
+          (cd dist && sha256sum sv-linux-x86_64 > sv-linux-x86_64.sha256)
           (cd dist && sha256sum sv-linux-x86_64.tar.gz > sv-linux-x86_64.tar.gz.sha256)
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
           files: |
+            dist/sv-linux-x86_64
+            dist/sv-linux-x86_64.sha256
             dist/sv-linux-x86_64.tar.gz
             dist/sv-linux-x86_64.tar.gz.sha256
