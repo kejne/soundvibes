@@ -55,7 +55,7 @@ fn at01_daemon_starts_with_valid_model() -> Result<(), Box<dyn Error>> {
 
     let binary = env!("CARGO_BIN_EXE_sv");
     let mut child = Command::new(binary)
-        .arg("--daemon")
+        .args(["daemon", "start"])
         .env("XDG_CONFIG_HOME", &config_home)
         .env("XDG_RUNTIME_DIR", &runtime_dir)
         .stdout(Stdio::piped())
@@ -134,7 +134,7 @@ fn at02_missing_model_returns_exit_code_2() -> Result<(), Box<dyn Error>> {
 
     let binary = env!("CARGO_BIN_EXE_sv");
     let output = Command::new(binary)
-        .arg("--daemon")
+        .args(["daemon", "start"])
         .env("XDG_CONFIG_HOME", &config_home)
         .env("XDG_RUNTIME_DIR", &runtime_dir)
         .output()?;
@@ -177,7 +177,7 @@ fn at03_invalid_input_device_returns_exit_code_3() -> Result<(), Box<dyn Error>>
 
     let binary = env!("CARGO_BIN_EXE_sv");
     let output = Command::new(binary)
-        .arg("--daemon")
+        .args(["daemon", "start"])
         .env("XDG_CONFIG_HOME", &config_home)
         .env("XDG_RUNTIME_DIR", &runtime_dir)
         .output()?;
@@ -326,7 +326,7 @@ fn at06_offline_operation() -> Result<(), Box<dyn Error>> {
 
     let binary = env!("CARGO_BIN_EXE_sv");
     let mut child = Command::new(binary)
-        .arg("--daemon")
+        .args(["daemon", "start"])
         .env("XDG_CONFIG_HOME", &config_home)
         .env("XDG_RUNTIME_DIR", &runtime_dir)
         .stdout(Stdio::piped())
@@ -548,7 +548,7 @@ fn run_daemon_for_logs(
 ) -> Result<Vec<String>, Box<dyn Error>> {
     let binary = env!("CARGO_BIN_EXE_sv");
     let mut child = Command::new(binary)
-        .arg("--daemon")
+        .args(["daemon", "start"])
         .env("XDG_CONFIG_HOME", config_home)
         .env("XDG_RUNTIME_DIR", runtime_dir)
         .stdout(Stdio::piped())
