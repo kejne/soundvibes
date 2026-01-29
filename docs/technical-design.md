@@ -45,7 +45,7 @@ This document describes the technical design for the `sv` CLI that performs offl
 - Simple energy-based threshold to start; upgradeable later.
 
 ### Command Control
-- Run `sv --daemon` to start the background service.
+- Run `sv daemon start` to start the background service.
 - Run `sv` to send a toggle command to the daemon over a Unix socket.
 - Store the socket in `${XDG_RUNTIME_DIR}/soundvibes/sv.sock`.
 - Provide actionable errors when the daemon socket is unavailable.
@@ -70,7 +70,7 @@ This document describes the technical design for the `sv` CLI that performs offl
 - Attempt GPU acceleration automatically; fall back to CPU when no supported GPU backend is detected.
 
 ### Model Download
-- On `sv`/`sv --daemon` startup, check for the configured model in the default data directory.
+- On `sv`/`sv daemon start` startup, check for the configured model in the default data directory.
 - Download the ggml model if missing, based on `model_language` and `model_size` config (defaults to small + general).
 - If `model_path` is provided, download or resolve the model there instead of the default location.
 
@@ -112,7 +112,7 @@ This document describes the technical design for the `sv` CLI that performs offl
 - Missing model: exit code 2 with message.
 - No input device: exit code 3 with message.
 - Stream errors: log and exit gracefully.
-- Daemon socket missing: emit actionable guidance for starting `sv --daemon`.
+- Daemon socket missing: emit actionable guidance for starting `sv daemon start`.
 
 ## Validation
 - Manual mic test with `sv` using a valid config file.

@@ -9,7 +9,7 @@ This PRD is a living document and should be updated as product requirements and 
 - Provide start/stop recording from the default microphone with transcription after capture stops.
 - Work fully offline with a small model and fast post-recording transcription.
 - Run as a background daemon that listens for control commands over a local socket.
-- Use the same binary: `sv --daemon` runs the service, `sv` toggles capture via the socket.
+- Use the same binary: `sv daemon start` runs the service, `sv` toggles capture via the socket.
 - Ship as a single Rust CLI binary plus an automatically downloaded model file.
 - Automatically accelerate inference on NVIDIA/AMD GPUs when available, otherwise fall back to CPU.
 - Enforce PR quality gates that match a single local command for tests and linting.
@@ -37,7 +37,7 @@ This PRD is a living document and should be updated as product requirements and 
 - Cross-platform support outside Linux.
 
 ## User Experience
-- Command: `sv --daemon` to start the background service.
+- Command: `sv daemon start` to start the background service.
 - Command: `sv` to toggle capture state via the daemon socket.
 - Configure model and options in the config file, then run the daemon.
 - When capture is toggled on, start recording; when toggled off, transcribe and output.
