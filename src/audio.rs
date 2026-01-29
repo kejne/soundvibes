@@ -13,9 +13,9 @@ pub struct Capture {
     overflow_count: Arc<AtomicUsize>,
 }
 
-pub const DEFAULT_CHUNK_MS: u64 = 250;
-pub const DEFAULT_VAD_THRESHOLD: f32 = 0.015;
-pub const DEFAULT_SILENCE_TIMEOUT_MS: u64 = 800;
+pub const DEFAULT_CHUNK_MS: u64 = 100;
+pub const DEFAULT_VAD_THRESHOLD: f32 = 0.010;
+pub const DEFAULT_SILENCE_TIMEOUT_MS: u64 = 1200;
 
 pub struct VadConfig {
     pub enabled: bool,
