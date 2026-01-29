@@ -65,7 +65,7 @@ If `model` is omitted, `sv` builds a default model path under
 Start the daemon:
 
 ```bash
-sv --daemon
+sv daemon start
 ```
 
 In another terminal, trigger a capture:
@@ -75,12 +75,12 @@ sv
 ```
 
 ## Environment Setup Tips
-- i3: add a keybinding to run `sv`, and let a user systemd service or `exec --no-startup-id sv --daemon` keep the daemon alive.
-- Hyprland: use `exec-once = sv --daemon` in `hyprland.conf`, plus `bind = SUPER, V, exec, sv` for capture.
+- i3: add a keybinding to run `sv`, and let a user systemd service or `exec --no-startup-id sv daemon start` keep the daemon alive.
+- Hyprland: use `exec-once = sv daemon start` in `hyprland.conf`, plus `bind = SUPER, V, exec, sv` for capture.
 - GNOME: add a custom keyboard shortcut (Settings -> Keyboard -> View and Customize Shortcuts) with command `sv`, and use Startup Applications or a user systemd service for the daemon.
 
 ## Daemon Lifecycle
-Run `sv --daemon` in the foreground for quick tests, or use a user systemd service
+Run `sv daemon start` in the foreground for quick tests, or use a user systemd service
 to keep it running across sessions.
 
 Example user unit (`~/.config/systemd/user/sv.service`):
@@ -90,7 +90,7 @@ Example user unit (`~/.config/systemd/user/sv.service`):
 Description=SoundVibes daemon
 
 [Service]
-ExecStart=%h/.local/bin/sv --daemon
+ExecStart=%h/.local/bin/sv daemon start
 Restart=on-failure
 
 [Install]
