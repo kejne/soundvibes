@@ -208,6 +208,7 @@ fn at04_daemon_toggle_captures_and_transcribes() -> Result<(), Box<dyn Error>> {
     };
     let config = DaemonConfig {
         model_path: None,
+        download_model: false,
         language: "en".to_string(),
         device: None,
         audio_host: AudioHost::Default,
@@ -257,6 +258,7 @@ fn at05_jsonl_output_formatting() -> Result<(), Box<dyn Error>> {
     };
     let config = DaemonConfig {
         model_path: None,
+        download_model: false,
         language: "en".to_string(),
         device: None,
         audio_host: AudioHost::Default,

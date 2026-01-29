@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use crate::audio;
 use crate::error::AppError;
-use crate::model::{ModelLanguage, ModelSize};
+use crate::model::{self, ModelLanguage, ModelSize, ModelSpec};
 use crate::output;
 use crate::types::{AudioHost, OutputFormat, OutputMode, VadMode};
 use crate::whisper::WhisperContext;
@@ -22,6 +22,7 @@ use crate::whisper::WhisperContext;
 #[derive(Debug, Clone)]
 pub struct DaemonConfig {
     pub model_path: Option<PathBuf>,
+    pub download_model: bool,
     pub language: String,
     pub device: Option<String>,
     pub audio_host: AudioHost,
@@ -117,6 +118,11 @@ pub fn select_audio_host(audio_host: AudioHost) -> Result<cpal::Host, AppError> 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ControlEvent {
     Toggle,
+    Stop,
+    SetModel {
+        size: ModelSize,
+        model_language: ModelLanguage,
+    },
     Error(String),
 }
 
@@ -163,7 +169,7 @@ pub fn run_daemon_loop(
         }
     }
 
-    let transcriber = deps
+    let mut transcriber = deps
         .transcriber_factory
         .load(config.model_path.as_deref())?;
     let vad = audio::VadConfig::new(
@@ -222,6 +228,45 @@ pub fn run_daemon_loop(
                     buffer.clear();
                     capture = Some(new_capture);
                     output.stdout("Toggle on. Recording...");
+                }
+            }
+            Ok(ControlEvent::Stop) => {
+                shutdown.store(true, Ordering::Relaxed);
+            }
+            Ok(ControlEvent::SetModel {
+                size,
+                model_language,
+            }) => {
+                if recording {
+                    recording = false;
+                    buffer.clear();
+                    capture = None;
+                    output.stdout("Recording stopped for model reload.");
+                }
+                let spec = ModelSpec::new(size, model_language);
+                match model::prepare_model(None, &spec, config.download_model) {
+                    Ok(prepared) => {
+                        if prepared.downloaded {
+                            output.stdout("Model download complete.");
+                        }
+                        let new_path = prepared.path.clone();
+                        match deps.transcriber_factory.load(Some(&new_path)) {
+                            Ok(new_transcriber) => {
+                                transcriber = new_transcriber;
+                                output.stdout(&format!(
+                                    "Model reloaded: size={}, model-language={}",
+                                    model_size_token(size),
+                                    model_language_token(model_language)
+                                ));
+                            }
+                            Err(err) => {
+                                output.stderr(&format!("Model reload failed: {err}"));
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        output.stderr(&format!("Model reload failed: {err}"));
+                    }
                 }
             }
             Ok(ControlEvent::Error(message)) => return Err(AppError::runtime(message)),
@@ -443,6 +488,20 @@ pub fn start_socket_listener(
                     let command = buffer.trim();
                     if command.is_empty() || command == "toggle" {
                         let _ = sender.send(ControlEvent::Toggle);
+                    } else if command == "stop" {
+                        let _ = sender.send(ControlEvent::Stop);
+                    } else if command.starts_with("set-model") {
+                        match parse_set_model_command(command) {
+                            Ok((size, model_language)) => {
+                                let _ = sender.send(ControlEvent::SetModel {
+                                    size,
+                                    model_language,
+                                });
+                            }
+                            Err(message) => {
+                                eprintln!("invalid set-model command: {message}");
+                            }
+                        }
                     } else {
                         eprintln!("unsupported daemon command: {command}");
                     }
@@ -457,6 +516,48 @@ pub fn start_socket_listener(
     });
 
     Ok((guard, receiver))
+}
+
+fn parse_set_model_command(command: &str) -> Result<(ModelSize, ModelLanguage), String> {
+    let mut size = None;
+    let mut model_language = None;
+    for token in command.split_whitespace().skip(1) {
+        if let Some(value) = token.strip_prefix("size=") {
+            size = Some(parse_model_size(value).ok_or_else(|| {
+                format!("invalid model size '{value}' (expected auto|tiny|base|small|medium|large)")
+            })?);
+        } else if let Some(value) = token.strip_prefix("model-language=") {
+            model_language =
+                Some(parse_model_language(value).ok_or_else(|| {
+                    format!("invalid model language '{value}' (expected auto|en)")
+                })?);
+        }
+    }
+
+    let size = size.ok_or_else(|| "missing size=<SIZE>".to_string())?;
+    let model_language =
+        model_language.ok_or_else(|| "missing model-language=<LANG>".to_string())?;
+    Ok((size, model_language))
+}
+
+fn parse_model_size(value: &str) -> Option<ModelSize> {
+    match value {
+        "auto" => Some(ModelSize::Auto),
+        "tiny" => Some(ModelSize::Tiny),
+        "base" => Some(ModelSize::Base),
+        "small" => Some(ModelSize::Small),
+        "medium" => Some(ModelSize::Medium),
+        "large" => Some(ModelSize::Large),
+        _ => None,
+    }
+}
+
+fn parse_model_language(value: &str) -> Option<ModelLanguage> {
+    match value {
+        "auto" => Some(ModelLanguage::Auto),
+        "en" => Some(ModelLanguage::En),
+        _ => None,
+    }
 }
 
 pub fn send_toggle_command() -> Result<(), AppError> {
@@ -764,6 +865,7 @@ mod tests {
         };
         let config = DaemonConfig {
             model_path: None,
+            download_model: false,
             language: "en".to_string(),
             device: None,
             audio_host: AudioHost::Default,
@@ -796,5 +898,21 @@ mod tests {
             .iter()
             .any(|line| line.contains("Transcript 1: hello")));
         Ok(())
+    }
+
+    #[test]
+    fn parses_set_model_command_tokens() {
+        let (size, model_language) =
+            parse_set_model_command("set-model size=small model-language=en")
+                .expect("expected parse success");
+        assert_eq!(size, ModelSize::Small);
+        assert_eq!(model_language, ModelLanguage::En);
+    }
+
+    #[test]
+    fn rejects_set_model_command_missing_language() {
+        let err =
+            parse_set_model_command("set-model size=small").expect_err("expected parse error");
+        assert!(err.contains("model-language"));
     }
 }

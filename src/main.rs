@@ -429,6 +429,7 @@ fn main() {
             .map(|prepared| prepared.path.clone());
         let daemon_config = daemon::DaemonConfig {
             model_path,
+            download_model: config.download_model,
             language: config.language.clone(),
             device: config.device.clone(),
             audio_host: config.audio_host,
@@ -559,6 +560,10 @@ mod tests {
 
         match control_events.recv_timeout(Duration::from_secs(1)) {
             Ok(daemon::ControlEvent::Toggle) => Ok(()),
+            Ok(daemon::ControlEvent::Stop) => Err(AppError::runtime("unexpected stop event")),
+            Ok(daemon::ControlEvent::SetModel { .. }) => {
+                Err(AppError::runtime("unexpected set-model event"))
+            }
             Ok(daemon::ControlEvent::Error(message)) => Err(AppError::runtime(message)),
             Err(_) => Err(AppError::runtime("toggle command not received")),
         }
