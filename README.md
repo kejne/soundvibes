@@ -74,6 +74,18 @@ In another terminal, trigger a capture:
 sv
 ```
 
+Update the model while the daemon is running:
+
+```bash
+sv daemon set-model --size small --model-language en
+```
+
+Stop the daemon:
+
+```bash
+sv daemon stop
+```
+
 ## Environment Setup Tips
 - i3: add a keybinding to run `sv`, and let a user systemd service or `exec --no-startup-id sv daemon start` keep the daemon alive.
 - Hyprland: use `exec-once = sv daemon start` in `hyprland.conf`, plus `bind = SUPER, V, exec, sv` for capture.
