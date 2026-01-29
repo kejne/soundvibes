@@ -1,5 +1,5 @@
 use clap::parser::ValueSource;
-use clap::{CommandFactory, FromArgMatches, Parser};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use serde::Deserialize;
 use std::env;
 use std::fs;
@@ -14,62 +14,138 @@ use sv::types::{AudioHost, OutputFormat, OutputMode, VadMode, VadSetting};
 #[derive(Parser, Debug)]
 #[command(name = "sv", version, about = "Offline speech-to-text CLI")]
 struct Cli {
-    #[arg(long, value_name = "PATH")]
+    #[arg(long, value_name = "PATH", global = true)]
     model: Option<PathBuf>,
 
-    #[arg(long, default_value = "small", value_name = "SIZE")]
+    #[arg(long, default_value = "small", value_name = "SIZE", global = true)]
     model_size: ModelSize,
 
-    #[arg(long, default_value = "auto", value_name = "LANG")]
+    #[arg(long, default_value = "auto", value_name = "LANG", global = true)]
     model_language: ModelLanguage,
 
-    #[arg(long, default_value = "en", value_name = "CODE")]
+    #[arg(long, default_value = "en", value_name = "CODE", global = true)]
     language: String,
 
-    #[arg(long, value_name = "NAME")]
+    #[arg(long, value_name = "NAME", global = true)]
     device: Option<String>,
 
-    #[arg(long, value_name = "HOST")]
+    #[arg(long, value_name = "HOST", global = true)]
     audio_host: Option<AudioHost>,
 
-    #[arg(long, default_value_t = 16_000, value_name = "HZ")]
+    #[arg(long, default_value_t = 16_000, value_name = "HZ", global = true)]
     sample_rate: u32,
 
-    #[arg(long, default_value = "plain", value_name = "MODE")]
+    #[arg(long, default_value = "plain", value_name = "MODE", global = true)]
     format: OutputFormat,
 
-    #[arg(long, default_value = "inject", value_name = "MODE")]
+    #[arg(long, default_value = "inject", value_name = "MODE", global = true)]
     mode: OutputMode,
 
-    #[arg(long, default_value = "on", value_name = "MODE")]
+    #[arg(long, default_value = "on", value_name = "MODE", global = true)]
     vad: VadMode,
 
-    #[arg(long, default_value_t = audio::DEFAULT_SILENCE_TIMEOUT_MS, value_name = "MS")]
+    #[arg(
+        long,
+        default_value_t = audio::DEFAULT_SILENCE_TIMEOUT_MS,
+        value_name = "MS",
+        global = true
+    )]
     vad_silence_ms: u64,
 
-    #[arg(long, default_value_t = audio::DEFAULT_VAD_THRESHOLD, value_name = "LEVEL")]
+    #[arg(
+        long,
+        default_value_t = audio::DEFAULT_VAD_THRESHOLD,
+        value_name = "LEVEL",
+        global = true
+    )]
     vad_threshold: f32,
 
-    #[arg(long, default_value_t = audio::DEFAULT_CHUNK_MS, value_name = "MS")]
+    #[arg(
+        long,
+        default_value_t = audio::DEFAULT_CHUNK_MS,
+        value_name = "MS",
+        global = true
+    )]
     vad_chunk_ms: u64,
 
-    #[arg(long, default_value_t = false)]
+    #[arg(long, default_value_t = false, global = true)]
     debug_audio: bool,
 
-    #[arg(long, default_value_t = false)]
+    #[arg(long, default_value_t = false, global = true)]
     debug_vad: bool,
 
-    #[arg(long, default_value_t = false)]
+    #[arg(long, default_value_t = false, global = true)]
     list_devices: bool,
 
-    #[arg(long, default_value_t = false)]
+    #[arg(long, default_value_t = false, global = true)]
     dump_audio: bool,
 
-    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+    #[arg(long, default_value_t = true, action = clap::ArgAction::Set, global = true)]
     download_model: bool,
 
-    #[arg(long, default_value_t = false)]
-    daemon: bool,
+    #[command(subcommand)]
+    command: Option<CliCommand>,
+}
+
+#[derive(Subcommand, Debug)]
+enum CliCommand {
+    Daemon {
+        #[command(subcommand)]
+        command: DaemonCommand,
+    },
+}
+
+#[derive(Subcommand, Debug, Copy, Clone, PartialEq, Eq)]
+enum DaemonCommand {
+    Start,
+    Stop,
+    #[command(name = "set-model")]
+    SetModel {
+        #[arg(long, value_name = "SIZE")]
+        size: ModelSize,
+        #[arg(long, value_name = "LANG")]
+        model_language: ModelLanguage,
+    },
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+enum CliMode {
+    Toggle,
+    RunDaemon,
+    StopDaemon,
+    SetModel {
+        size: ModelSize,
+        model_language: ModelLanguage,
+    },
+    ListDevices,
+}
+
+fn resolve_cli_mode(cli: &Cli) -> CliMode {
+    match cli.command {
+        Some(CliCommand::Daemon {
+            command: DaemonCommand::Start,
+        }) => CliMode::RunDaemon,
+        Some(CliCommand::Daemon {
+            command: DaemonCommand::Stop,
+        }) => CliMode::StopDaemon,
+        Some(CliCommand::Daemon {
+            command:
+                DaemonCommand::SetModel {
+                    size,
+                    model_language,
+                },
+        }) => CliMode::SetModel {
+            size,
+            model_language,
+        },
+        None => {
+            if cli.list_devices {
+                CliMode::ListDevices
+            } else {
+                CliMode::Toggle
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -271,12 +347,33 @@ struct FileConfig {
 fn main() {
     let matches = Cli::command().get_matches();
     let cli = Cli::from_arg_matches(&matches).expect("Failed to parse CLI arguments");
-    if !cli.daemon && !cli.list_devices {
-        if let Err(err) = daemon::send_toggle_command() {
-            eprintln!("error: {err}");
-            process::exit(err.exit_code());
+    let mode = resolve_cli_mode(&cli);
+    match mode {
+        CliMode::Toggle => {
+            if let Err(err) = daemon::send_toggle_command() {
+                eprintln!("error: {err}");
+                process::exit(err.exit_code());
+            }
+            return;
         }
-        return;
+        CliMode::StopDaemon => {
+            if let Err(err) = daemon::send_stop_command() {
+                eprintln!("error: {err}");
+                process::exit(err.exit_code());
+            }
+            return;
+        }
+        CliMode::SetModel {
+            size,
+            model_language,
+        } => {
+            if let Err(err) = daemon::send_set_model_command(size, model_language) {
+                eprintln!("error: {err}");
+                process::exit(err.exit_code());
+            }
+            return;
+        }
+        CliMode::RunDaemon | CliMode::ListDevices => {}
     }
     let file_config = match load_config_file() {
         Ok(config) => config,
@@ -285,7 +382,10 @@ fn main() {
             process::exit(err.exit_code());
         }
     };
-    let config = Config::from_sources(cli, &matches, file_config);
+    let mut config = Config::from_sources(cli, &matches, file_config);
+    if mode == CliMode::RunDaemon {
+        config.list_devices = false;
+    }
 
     let prepared_model = if config.list_devices {
         None
@@ -489,6 +589,45 @@ mod tests {
 
         let err = daemon::send_toggle_command().expect_err("expected socket error");
         assert!(err.to_string().contains("daemon socket unavailable"));
-        assert!(err.to_string().contains("sv --daemon"));
+        assert!(err.to_string().contains("sv daemon start"));
+    }
+
+    #[test]
+    fn defaults_to_toggle_when_no_subcommand() {
+        let cli = Cli::try_parse_from(["sv"]).expect("failed to parse cli");
+        assert_eq!(resolve_cli_mode(&cli), CliMode::Toggle);
+    }
+
+    #[test]
+    fn parses_daemon_start_subcommand() {
+        let cli = Cli::try_parse_from(["sv", "daemon", "start"]).expect("failed to parse cli");
+        assert_eq!(resolve_cli_mode(&cli), CliMode::RunDaemon);
+    }
+
+    #[test]
+    fn parses_daemon_stop_subcommand() {
+        let cli = Cli::try_parse_from(["sv", "daemon", "stop"]).expect("failed to parse cli");
+        assert_eq!(resolve_cli_mode(&cli), CliMode::StopDaemon);
+    }
+
+    #[test]
+    fn parses_daemon_set_model_subcommand() {
+        let cli = Cli::try_parse_from([
+            "sv",
+            "daemon",
+            "set-model",
+            "--size",
+            "small",
+            "--model-language",
+            "en",
+        ])
+        .expect("failed to parse cli");
+        assert_eq!(
+            resolve_cli_mode(&cli),
+            CliMode::SetModel {
+                size: ModelSize::Small,
+                model_language: ModelLanguage::En,
+            }
+        );
     }
 }

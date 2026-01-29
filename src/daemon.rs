@@ -14,6 +14,7 @@ use std::time::Duration;
 
 use crate::audio;
 use crate::error::AppError;
+use crate::model::{ModelLanguage, ModelSize};
 use crate::output;
 use crate::types::{AudioHost, OutputFormat, OutputMode, VadMode};
 use crate::whisper::WhisperContext;
@@ -459,23 +460,62 @@ pub fn start_socket_listener(
 }
 
 pub fn send_toggle_command() -> Result<(), AppError> {
+    send_daemon_command("toggle")
+}
+
+pub fn send_stop_command() -> Result<(), AppError> {
+    send_daemon_command("stop")
+}
+
+pub fn send_set_model_command(
+    size: ModelSize,
+    model_language: ModelLanguage,
+) -> Result<(), AppError> {
+    let command = format!(
+        "set-model size={} model-language={}",
+        model_size_token(size),
+        model_language_token(model_language)
+    );
+    send_daemon_command(&command)
+}
+
+fn send_daemon_command(command: &str) -> Result<(), AppError> {
     let socket_path = daemon_socket_path()?;
     if !socket_path.exists() {
         return Err(AppError::runtime(format!(
-            "daemon socket not found at {}. Start it with `sv --daemon`",
+            "daemon socket not found at {}. Start it with `sv daemon start`",
             socket_path.display()
         )));
     }
     let mut stream = UnixStream::connect(&socket_path).map_err(|err| {
         AppError::runtime(format!(
-            "daemon socket unavailable at {}. Start it with `sv --daemon` ({err})",
+            "daemon socket unavailable at {}. Start it with `sv daemon start` ({err})",
             socket_path.display()
         ))
     })?;
+    let payload = format!("{command}\n");
     stream
-        .write_all(b"toggle\n")
-        .map_err(|err| AppError::runtime(format!("failed to send toggle: {err}")))?;
+        .write_all(payload.as_bytes())
+        .map_err(|err| AppError::runtime(format!("failed to send {command}: {err}")))?;
     Ok(())
+}
+
+fn model_size_token(size: ModelSize) -> &'static str {
+    match size {
+        ModelSize::Auto => "auto",
+        ModelSize::Tiny => "tiny",
+        ModelSize::Base => "base",
+        ModelSize::Small => "small",
+        ModelSize::Medium => "medium",
+        ModelSize::Large => "large",
+    }
+}
+
+fn model_language_token(model_language: ModelLanguage) -> &'static str {
+    match model_language {
+        ModelLanguage::Auto => "auto",
+        ModelLanguage::En => "en",
+    }
 }
 
 struct CpalAudioBackend;
