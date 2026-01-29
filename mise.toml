@@ -11,7 +11,11 @@ run = "cargo run --"
 
 [tasks.ci]
 description = "Run full CI quality gates"
-run = "cargo fmt --check && cargo clippy --all-targets --all-features && cargo test && cargo build --release"
+run = "cargo fmt --check && cargo clippy --all-targets --all-features && cargo test"
+
+[tasks.build-release]
+description = "Build release binary"
+run = "cargo build --release"
 
 [tasks.prepare-dev]
 description = "Install build prerequisites based on OS"
