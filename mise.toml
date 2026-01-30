@@ -5,6 +5,9 @@ PATH = "{{ env.HOME }}/.local/share/vulkan-sdk/current/x86_64/bin:{{ env.PATH | 
 LD_LIBRARY_PATH = "{{ env.HOME }}/.local/share/vulkan-sdk/current/x86_64/lib:{{ env.LD_LIBRARY_PATH | default(value=\"\") }}"
 VK_LAYER_PATH = "{{ env.HOME }}/.local/share/vulkan-sdk/current/x86_64/etc/vulkan/explicit_layer.d:{{ env.VK_LAYER_PATH | default(value=\"\") }}"
 
+[tools]
+node = "20"
+
 [tasks.run-local]
 description = "Run sv with local model"
 run = "cargo run --"
@@ -16,6 +19,30 @@ run = "cargo fmt --check && cargo clippy --all-targets --all-features && cargo t
 [tasks.build-release]
 description = "Build release binary"
 run = "cargo build --release"
+
+[tasks.web-install]
+description = "Install web dependencies"
+run = "cd web && npm install --no-audit --no-fund"
+
+[tasks.web-dev]
+description = "Run Astro dev server"
+run = "cd web && npm run dev"
+
+[tasks.web-build]
+description = "Build the marketing site"
+run = "cd web && npm run build"
+
+[tasks.web-preview]
+description = "Preview the marketing site"
+run = "cd web && npm run preview -- --host 127.0.0.1 --port 4321"
+
+[tasks.web-test-ui]
+description = "Run UI smoke checks"
+run = "cd web && npm run test:ui"
+
+[tasks.web-test-e2e]
+description = "Run Playwright smoke tests"
+run = "cd web && npm run test:e2e"
 
 [tasks.prepare-dev]
 description = "Install build prerequisites based on OS"
