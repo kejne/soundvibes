@@ -1,6 +1,8 @@
-# SoundVibes (sv)
-
-Offline voice-to-text CLI for Linux.
+<div align="center">
+  <img src="docs/assets/soundvibes.png" alt="SoundVibes Logo" width="200">
+  <h1>SoundVibes (sv)</h1>
+  <p>Offline voice-to-text CLI for Linux</p>
+</div>
 
 ## Overview
 `sv` captures audio from your microphone using start/stop toggles and runs offline speech-to-text with a small whisper.cpp model. It aims for minimal runtime dependencies and ships as a single binary plus a local model file.
