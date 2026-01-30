@@ -132,7 +132,7 @@ import BaseLayout from "../layouts/BaseLayout.astro";
   <section id="benefits" class="mx-auto w-full max-w-6xl px-6 py-16">
     <div class="flex flex-col items-start gap-6 md:flex-row md:items-end md:justify-between">
       <div>
-        <p class="text-xs font-semibold uppercase tracking-[0.2em] text-ink/50">Benefits</p>
+        <p class="text-xs font-semibold uppercase tracking-[0.2em] text-ink/50">Why Soundvibes</p>
         <h2 class="mt-4 font-display text-3xl font-semibold text-ink">Focused tooling, fewer distractions.</h2>
       </div>
       <p class="max-w-lg text-lg text-ink/70">
@@ -158,6 +158,79 @@ import BaseLayout from "../layouts/BaseLayout.astro";
         <p class="mt-3 text-sm text-ink/70">
           Two commands, no socket detail required. Start the daemon, then toggle on/off.
         </p>
+      </div>
+    </div>
+  </section>
+
+  <section class="mx-auto w-full max-w-6xl px-6 py-16">
+    <div class="grid gap-10 lg:grid-cols-[1.1fr_0.9fr] lg:items-center">
+      <div>
+        <p class="text-xs font-semibold uppercase tracking-[0.2em] text-ink/50">Use cases</p>
+        <h2 class="mt-4 font-display text-3xl font-semibold text-ink">Everyday voice capture, without friction.</h2>
+        <p class="mt-4 text-lg text-ink/70">
+          Use Soundvibes to drop short notes between meetings, transcribe research thoughts, or capture
+          ideas while coding. Everything stays local, so you can stay focused offline.
+        </p>
+        <div class="mt-6 grid gap-3 text-sm text-ink/70">
+          <div class="flex items-center gap-3">
+            <span class="h-2 w-2 rounded-full bg-mint"></span>
+            Daily voice notes and journaling
+          </div>
+          <div class="flex items-center gap-3">
+            <span class="h-2 w-2 rounded-full bg-citrus"></span>
+            Coding standups and status updates
+          </div>
+          <div class="flex items-center gap-3">
+            <span class="h-2 w-2 rounded-full bg-coral"></span>
+            Research capture while offline
+          </div>
+        </div>
+      </div>
+      <div class="glass-card rounded-3xl p-6">
+        <div class="rounded-2xl bg-white px-5 py-6">
+          <p class="text-xs font-semibold uppercase tracking-[0.2em] text-ink/50">Session flow</p>
+          <h3 class="mt-4 font-display text-2xl font-semibold text-ink">Stay in the zone.</h3>
+          <p class="mt-3 text-sm text-ink/70">
+            Start the daemon once, then toggle capture whenever you want a short transcript. Minimal
+            overhead, maximum focus.
+          </p>
+          <div class="mt-5 flex flex-wrap gap-3 text-xs font-semibold uppercase tracking-[0.2em] text-ink/50">
+            <span class="rounded-full border border-ink/10 px-3 py-1">Offline</span>
+            <span class="rounded-full border border-ink/10 px-3 py-1">Automatic models</span>
+            <span class="rounded-full border border-ink/10 px-3 py-1">Two commands</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="mx-auto w-full max-w-6xl px-6 py-16">
+    <div class="flex flex-col gap-10 lg:flex-row lg:items-start lg:justify-between">
+      <div class="max-w-xl">
+        <p class="text-xs font-semibold uppercase tracking-[0.2em] text-ink/50">FAQ</p>
+        <h2 class="mt-4 font-display text-3xl font-semibold text-ink">Answers, without the noise.</h2>
+        <p class="mt-4 text-lg text-ink/70">
+          Keep it simple. Soundvibes is built around the two commands you need, with models handled for you.
+        </p>
+      </div>
+      <div class="grid gap-4 lg:w-[55%]">
+        <div class="glass-card rounded-2xl p-5">
+          <p class="font-semibold text-ink">Does it run fully offline?</p>
+          <p class="mt-2 text-sm text-ink/70">Yes. After the first model download, everything stays local.</p>
+        </div>
+        <div class="glass-card rounded-2xl p-5">
+          <p class="font-semibold text-ink">How do I start and stop capture?</p>
+          <p class="mt-2 text-sm text-ink/70">
+            Start the daemon with <span class="font-semibold text-ink">sv daemon start</span>, then toggle with
+            <span class="font-semibold text-ink">sv</span>.
+          </p>
+        </div>
+        <div class="glass-card rounded-2xl p-5">
+          <p class="font-semibold text-ink">Where do I download it?</p>
+          <p class="mt-2 text-sm text-ink/70">
+            GitHub Releases is the only distribution path linked here.
+          </p>
+        </div>
       </div>
     </div>
   </section>
