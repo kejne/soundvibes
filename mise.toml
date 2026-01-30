@@ -32,6 +32,10 @@ run = "cd web && npm run dev"
 description = "Build the marketing site"
 run = "cd web && npm run build"
 
+[tasks.web-lint]
+description = "Lint the marketing site"
+run = "cd web && npm run lint"
+
 [tasks.web-preview]
 description = "Preview the marketing site"
 run = "cd web && npm run preview -- --host 127.0.0.1 --port 4321"
@@ -43,6 +47,10 @@ run = "cd web && npm run test:ui"
 [tasks.web-test-e2e]
 description = "Run Playwright smoke tests"
 run = "cd web && npm run test:e2e"
+
+[tasks.web-ci]
+description = "Run web build and test suite"
+run = "cd web && npm run lint && npm run build && npm run test:ui && npm run test:e2e"
 
 [tasks.prepare-dev]
 description = "Install build prerequisites based on OS"
