@@ -6,7 +6,7 @@ LD_LIBRARY_PATH = "{{ env.HOME }}/.local/share/vulkan-sdk/current/x86_64/lib:{{ 
 VK_LAYER_PATH = "{{ env.HOME }}/.local/share/vulkan-sdk/current/x86_64/etc/vulkan/explicit_layer.d:{{ env.VK_LAYER_PATH | default(value=\"\") }}"
 
 [tools]
-node = "20"
+node = "22"
 
 [tasks.run-local]
 description = "Run sv with local model"
