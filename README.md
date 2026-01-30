@@ -6,7 +6,26 @@ Offline voice-to-text CLI for Linux.
 `sv` captures audio from your microphone using start/stop toggles and runs offline speech-to-text with a small whisper.cpp model. It aims for minimal runtime dependencies and ships as a single binary plus a local model file.
 
 ## Quick Start
-### 1) Requirements
+
+### 1) One-Line Install (Recommended)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kejne/soundvibes/main/install.sh | sh
+```
+
+Or download and run with options:
+
+```bash
+curl -fsSL -o install.sh https://raw.githubusercontent.com/kejne/soundvibes/main/install.sh
+chmod +x install.sh
+./install.sh
+```
+
+The install script handles everything: dependencies, binary installation, configuration, and optional systemd service setup.
+
+See [docs/installation.md](docs/installation.md) for detailed options and manual installation steps.
+
+### 2) Requirements
 - Linux x86_64
 - Microphone input device
 
@@ -23,15 +42,16 @@ or build CPU-only with `cargo build --no-default-features`.
   - `sudo dnf install -y vulkan-headers vulkan-loader vulkan-validation-layers`
   - GPU ICD: `sudo dnf install -y mesa-vulkan-drivers` (AMD/Intel) or `sudo dnf install -y akmod-nvidia`
 
-### 2) Install from GitHub Releases
-Download the latest Linux release from:
+### 3) Manual Install from GitHub Releases
+
+If you prefer manual installation, download the latest Linux release from:
 
 https://github.com/kejne/soundvibes/releases
 
 Example (replace the version with the latest):
 
 ```bash
-curl -L -o soundvibes.tar.gz https://github.com/kejne/soundvibes/releases/download/v0.1.0/soundvibes-linux-x86_64.tar.gz
+curl -L -o soundvibes.tar.gz https://github.com/kejne/soundvibes/releases/download/v0.1.0/sv-linux-x86_64.tar.gz
 tar -xzf soundvibes.tar.gz
 mkdir -p "$HOME/.local/bin"
 mv sv "$HOME/.local/bin/sv"
@@ -39,7 +59,7 @@ mv sv "$HOME/.local/bin/sv"
 
 Make sure `~/.local/bin` is on your `PATH`.
 
-### 3) Configure
+### 4) Configure
 Create a config file at `${XDG_CONFIG_HOME:-~/.config}/soundvibes/config.toml`.
 
 ```toml
@@ -52,7 +72,7 @@ device = "default"
 sample_rate = 16000
 format = "plain"
 vad = false
-mode = "inject"
+mode = "stdout"
 ```
 
 If `model` is omitted, `sv` builds a default model path under
