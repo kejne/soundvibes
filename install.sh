@@ -310,15 +310,25 @@ install_binary() {
     # Get latest release URL
     print_info "Fetching latest release information..."
     
-    LATEST_URL=$(curl -fsSL --max-time 30 --connect-timeout 10 \
-        "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null | \
+    # Fetch release info with better error handling
+    API_RESPONSE=$(curl -fsSL --max-time 30 --connect-timeout 10 \
+        "https://api.github.com/repos/${REPO}/releases/latest" 2>&1) || {
+        CURL_EXIT=$?
+        print_error "Failed to contact GitHub API (exit code: $CURL_EXIT)"
+        print_info "Error details: $API_RESPONSE"
+        print_info "Please check your internet connection"
+        print_info "You can also manually download from: https://github.com/${REPO}/releases"
+        exit 1
+    }
+    
+    LATEST_URL=$(echo "$API_RESPONSE" | \
         grep -o '"browser_download_url": "[^"]*soundvibes-linux-x86_64[^"]*"' | \
         grep -o 'https://[^"]*')
     
     if [ -z "$LATEST_URL" ]; then
-        print_error "Could not find latest release from GitHub API"
-        print_info "Please check your internet connection or try again later"
-        print_info "You can also manually download from: https://github.com/${REPO}/releases"
+        print_error "Could not find download URL in GitHub API response"
+        print_info "The release may not have a Linux x86_64 binary yet"
+        print_info "You can manually download from: https://github.com/${REPO}/releases"
         exit 1
     fi
     
@@ -640,12 +650,12 @@ done
 main() {
     printf "${BLUE}"
     cat << 'EOF'
-   ____                      __     _       _
-  / ___| _   _  ___  ___ __ _ \ \   (_) __ _| |__  ___
-  \___ \| | | |/ _ \/ __/ _` | |  | |/ _` | '_ \/ __|
-   ___) | |_| |  __/ (_| (_| | |  | | (_| | | | \__ \
-  |____/ \__, |\___|\___\__,_| |  |_|\__,_|_| |_|___/
-         |___/              /_/
+  _________                        ._______   ____._____.                  
+ /   _____/ ____  __ __  ____    __| _/\   \ /   /|__\_ |__   ____   ______
+ \_____  \ /  _ \|  |  \/    \  / __ |  \   Y   / |  || __ \_/ __ \ /  ___/
+ /        (  <_> )  |  /   |  \/ /_/ |   \     /  |  || \_\ \  ___/ \___ \ 
+/_______  /\____/|____/|___|  /\____ |    \___/   |__||___  /\___  >____  >
+        \/                  \/      \/                    \/     \/     \/ 
 EOF
     printf "${NC}\n"
     printf "${BLUE}Offline Speech-to-Text for Linux${NC}\n\n"
