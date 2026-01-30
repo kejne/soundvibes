@@ -96,7 +96,7 @@ check_existing() {
         
         if [ "$AUTO_YES" = false ]; then
             printf "Overwrite existing installation? [y/N] "
-            read -r response
+            read -r response </dev/tty
             case "$response" in
                 [Yy]*)
                     print_info "Will overwrite existing installation"
@@ -220,7 +220,7 @@ install_deps() {
             
             if [ "$AUTO_YES" = false ]; then
                 printf "Continue without installing dependencies? [y/N] "
-                read -r response
+                read -r response </dev/tty
                 case "$response" in
                     [Yy]*)
                         print_info "Continuing without dependency installation"
@@ -425,7 +425,7 @@ setup_systemd() {
     
     if [ "$AUTO_YES" = false ]; then
         printf "Set up systemd user service for automatic startup? [Y/n] "
-        read -r response
+        read -r response </dev/tty
         case "$response" in
             [Nn]*)
                 print_info "Skipping systemd service setup"
@@ -473,7 +473,7 @@ predownload_model() {
     
     if [ "$AUTO_YES" = false ]; then
         printf "Pre-download whisper model (~500MB)? This avoids delay on first use. [y/N] "
-        read -r response
+        read -r response </dev/tty
         case "$response" in
             [Yy]*)
                 print_info "Will pre-download model"
@@ -528,7 +528,7 @@ uninstall() {
     # Ask about config and data
     if [ "$AUTO_YES" = false ]; then
         printf "Remove configuration and downloaded models? [y/N] "
-        read -r response
+        read -r response </dev/tty
         case "$response" in
             [Yy]*)
                 rm -rf "$CONFIG_DIR"
