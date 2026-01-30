@@ -51,7 +51,7 @@ https://github.com/kejne/soundvibes/releases
 Example (replace the version with the latest):
 
 ```bash
-curl -L -o soundvibes.tar.gz https://github.com/kejne/soundvibes/releases/download/v0.1.0/soundvibes-linux-x86_64.tar.gz
+curl -L -o soundvibes.tar.gz https://github.com/kejne/soundvibes/releases/download/v0.1.0/sv-linux-x86_64.tar.gz
 tar -xzf soundvibes.tar.gz
 mkdir -p "$HOME/.local/bin"
 mv sv "$HOME/.local/bin/sv"
