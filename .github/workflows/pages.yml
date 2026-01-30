@@ -37,7 +37,7 @@ jobs:
       - name: Build site
         run: npm run build
         env:
-          SV_BASE_PATH: "/${{ github.event.repository.name }}/"
+          SV_BASE_PATH: "/"
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
