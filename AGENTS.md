@@ -31,6 +31,8 @@ Quick reference:
 
 Prefer mise tasks for build/run/test workflows unless the user requests otherwise.
 
+Tip: use `mise tasks` to list available workflows; most tasks can be identified there.
+
 Mise tasks:
 - `mise run prepare-dev` (install build prerequisites for your distro)
 - `mise run run-local` (run `sv` locally)
@@ -47,6 +49,12 @@ Tests (specific variants):
 
 Validation plan requirement:
 - Always note which checks you ran or plan to run (tests, manual acceptance checks, etc.).
+
+## Marketing Site (web)
+
+- Prefer `mise run web-dev` (Astro dev server) for HMR while developing; avoid restarting between edits.
+- Use `mise run web-preview` only to validate the built output.
+- Use `agent-browser` during development; reserve `snapshot` for visual inspection and use cheaper validators (build/tests/logs) for most checks.
 
 ## Coding Style Guidelines (Rust)
 
