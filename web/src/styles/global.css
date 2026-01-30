@@ -1,0 +1,38 @@
+@import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Space+Grotesk:wght@400;500;600;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --page-bg: #f6f8ff;
+  --page-bg-alt: #e7efff;
+  --surface: #ffffff;
+  --surface-contrast: #0a0f1f;
+  --accent: #1ee3b1;
+  --accent-warm: #ffb347;
+  --accent-hot: #ff7a7a;
+}
+
+* {
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  @apply bg-[color:var(--page-bg)] text-ink font-body antialiased;
+  min-height: 100vh;
+}
+
+.page-shell {
+  background: radial-gradient(circle at top left, rgba(30, 227, 177, 0.18), transparent 55%),
+    radial-gradient(circle at 70% 10%, rgba(255, 179, 71, 0.18), transparent 50%),
+    linear-gradient(135deg, var(--page-bg), var(--page-bg-alt));
+}
+
+.glass-card {
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(10, 15, 31, 0.08);
+  box-shadow: 0 16px 40px rgba(10, 15, 31, 0.12);
+  backdrop-filter: blur(8px);
+}

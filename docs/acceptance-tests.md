@@ -86,3 +86,9 @@ These tests validate the product behavior for the offline Linux CLI.
 - Command: `mise run ci` locally and the CI workflow for the PR.
 - Expect: the same set of checks run in both environments.
 - Pass: both local and CI runs complete successfully with matching steps.
+
+### AT-10: Marketing site build and smoke test
+- Setup: ensure Node.js and npm are installed, export `SV_WEB_TESTS=1`.
+- Command: `cargo test --test acceptance -- at10_marketing_site_builds_and_smoke_test`.
+- Expect: `web/` dependencies install, Astro builds, and the UI smoke test passes.
+- Pass: the acceptance test exits 0.
