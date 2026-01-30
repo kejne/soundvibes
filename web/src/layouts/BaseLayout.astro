@@ -12,15 +12,23 @@ const { title = "Soundvibes" } = Astro.props;
       name="description"
       content="Soundvibes is the offline speech-to-text CLI for Linux with minimal dependencies, automatic model downloads, and a simple toggle workflow."
     />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <title>{title}</title>
   </head>
   <body>
     <div class="page-shell min-h-screen">
       <header class="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-8">
         <div class="flex items-center gap-3">
-          <div class="flex h-11 w-11 items-center justify-center rounded-2xl bg-ink text-white">
-            <span class="font-display text-lg font-semibold">SV</span>
-          </div>
+          <img
+            class="h-11 w-11 rounded-2xl object-cover"
+            src="/brand/soundvibes.png"
+            alt="Soundvibes logo"
+            width="44"
+            height="44"
+            loading="eager"
+          />
           <div>
             <p class="font-display text-lg font-semibold text-ink">Soundvibes</p>
             <p class="text-sm text-ink/60">Offline voice-to-text, focused.</p>
