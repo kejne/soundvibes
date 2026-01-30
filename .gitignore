@@ -4,6 +4,8 @@ target/
 web/node_modules/
 web/dist/
 web/.astro/
+web/test-results/
+web/playwright-report/
 
 # bv (beads viewer) local config and caches
 .bv/
