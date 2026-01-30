@@ -322,8 +322,8 @@ install_binary() {
     }
     
     LATEST_URL=$(echo "$API_RESPONSE" | \
-        grep -o '"browser_download_url": "[^"]*soundvibes-linux-x86_64[^"]*"' | \
-        grep -o 'https://[^"]*')
+        grep -o '"browser_download_url": "[^"]*sv-linux-x86_64\.tar\.gz"' | \
+        grep -o 'https://[^"]*' | head -1)
     
     if [ -z "$LATEST_URL" ]; then
         print_error "Could not find download URL in GitHub API response"
@@ -354,10 +354,10 @@ install_binary() {
         exit 1
     }
     
-    # Install binary
-    mkdir -p "$BIN_DIR"
-    cp "${TMP_DIR}/sv" "$BIN_DIR/sv"
-    chmod +x "$BIN_DIR/sv"
+     # Install binary
+     mkdir -p "$BIN_DIR"
+     cp "${TMP_DIR}/sv-linux-x86_64" "$BIN_DIR/sv"
+     chmod +x "$BIN_DIR/sv"
     
     print_success "Binary installed to ${BIN_DIR}/sv"
 }
