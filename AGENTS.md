@@ -2,6 +2,8 @@
 
 This repository is a Rust CLI app for offline speech-to-text on Linux. Use these notes to work efficiently and consistently.
 
+**New to this project?** Visit [soundvibes.teashaped.dev](https://soundvibes.teashaped.dev) for an overview of what SoundVibes does, how users interact with it, and the key features.
+
 ## Source-of-Truth Rules
 
 - Follow these instructions plus any user-provided requirements.
