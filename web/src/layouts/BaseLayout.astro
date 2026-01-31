@@ -22,7 +22,7 @@ const baseUrl = import.meta.env.BASE_URL;
   <body>
     <div class="page-shell min-h-screen">
       <header class="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-8">
-        <div class="flex items-center gap-3">
+        <a href={`${baseUrl}`} class="flex items-center gap-3 transition hover:opacity-80">
           <img
             class="h-[112px] w-auto rounded-2xl object-cover"
             src={`${baseUrl}brand/soundvibes.png`}
@@ -35,11 +35,12 @@ const baseUrl = import.meta.env.BASE_URL;
             <p class="font-display text-lg font-semibold text-ink">Soundvibes</p>
             <p class="text-sm text-ink/60">Offline voice-to-text, focused.</p>
           </div>
-        </div>
+        </a>
         <nav class="hidden items-center gap-6 text-sm font-medium text-ink/70 md:flex">
-          <a class="transition hover:text-ink" href="#workflow">Workflow</a>
-          <a class="transition hover:text-ink" href="#benefits">Benefits</a>
-          <a class="transition hover:text-ink" href="#download">Release</a>
+          <a class="transition hover:text-ink" href={`${baseUrl}docs`}>Docs</a>
+          <a class="transition hover:text-ink" href={`${baseUrl}#workflow`}>Workflow</a>
+          <a class="transition hover:text-ink" href={`${baseUrl}#benefits`}>Benefits</a>
+          <a class="transition hover:text-ink" href={`${baseUrl}#install`}>Install</a>
         </nav>
       </header>
       <main>

@@ -10,18 +10,44 @@ Note: This repository is developed by agents using beads for issue tracking. Hum
 - Rust toolchain (stable)
 - Microphone input device (for runtime tests)
 
-Vulkan GPU acceleration is enabled by default. Install the Vulkan loader + headers for your distro,
-or build CPU-only with `cargo build --no-default-features`.
+### Build Dependencies
+Install the following to compile sv from source:
 
-- Arch Linux:
-  - `sudo pacman -Syu vulkan-headers vulkan-icd-loader vulkan-validation-layers`
-  - GPU ICD: `sudo pacman -S vulkan-radeon` (AMD) or `sudo pacman -S nvidia-utils` (NVIDIA)
-- Ubuntu / Debian:
-  - `sudo apt-get update && sudo apt-get install -y libvulkan-dev vulkan-validationlayers`
-  - GPU ICD: `sudo apt-get install -y mesa-vulkan-drivers` (AMD/Intel) or `sudo apt-get install -y nvidia-driver-<version>`
-- Fedora:
-  - `sudo dnf install -y vulkan-headers vulkan-loader vulkan-validation-layers`
-  - GPU ICD: `sudo dnf install -y mesa-vulkan-drivers` (AMD/Intel) or `sudo dnf install -y akmod-nvidia`
+**Arch Linux:**
+```bash
+sudo pacman -Syu base-devel cmake pkgconf rust alsa-lib vulkan-headers \
+    vulkan-icd-loader vulkan-validation-layers glslang
+```
+
+**Ubuntu / Debian:**
+```bash
+sudo apt-get update
+sudo apt-get install -y build-essential cmake pkg-config libasound2-dev \
+    libvulkan-dev vulkan-validationlayers clang
+```
+
+**Fedora:**
+```bash
+sudo dnf install -y cmake pkgconf-pkg-config alsa-lib-devel vulkan-headers \
+    vulkan-loader vulkan-validation-layers glslang clang-devel
+```
+
+### GPU Drivers (Optional)
+Vulkan GPU acceleration is enabled by default. Install GPU drivers for your hardware:
+
+- **Arch Linux:**
+  - AMD: `sudo pacman -S vulkan-radeon`
+  - NVIDIA: `sudo pacman -S nvidia-utils`
+  
+- **Ubuntu / Debian:**
+  - AMD/Intel: `sudo apt-get install -y mesa-vulkan-drivers`
+  - NVIDIA: `sudo apt-get install -y nvidia-driver-<version>`
+  
+- **Fedora:**
+  - AMD/Intel: `sudo dnf install -y mesa-vulkan-drivers`
+  - NVIDIA: `sudo dnf install -y akmod-nvidia`
+
+To build without GPU support: `cargo build --no-default-features`
 
 ### Clone and Build
 ```bash

@@ -1,0 +1,903 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+---
+
+<BaseLayout title="Documentation | Soundvibes">
+  <div class="mx-auto grid w-full max-w-6xl gap-12 px-6 pb-16 pt-6 lg:grid-cols-[240px_1fr] lg:items-start">
+    <!-- Sidebar Navigation -->
+    <nav class="hidden lg:block sticky top-6 space-y-6">
+      <div>
+        <p class="text-xs font-semibold uppercase tracking-[0.2em] text-ink/50 mb-3">Getting Started</p>
+        <ul class="space-y-2 text-sm">
+          <li><a href="#quickstart" class="text-ink/70 hover:text-ink transition">Quick Start</a></li>
+          <li><a href="#installation" class="text-ink/70 hover:text-ink transition">Installation</a></li>
+          <li><a href="#workflow-setup" class="text-ink/70 hover:text-ink transition">Setting Up Workflow</a></li>
+        </ul>
+      </div>
+      <div>
+        <p class="text-xs font-semibold uppercase tracking-[0.2em] text-ink/50 mb-3">Configuration</p>
+        <ul class="space-y-2 text-sm">
+          <li><a href="#config-file" class="text-ink/70 hover:text-ink transition">Config File</a></li>
+          <li><a href="#cli-reference" class="text-ink/70 hover:text-ink transition">CLI Reference</a></li>
+          <li><a href="#model-config" class="text-ink/70 hover:text-ink transition">Model Settings</a></li>
+          <li><a href="#audio-config" class="text-ink/70 hover:text-ink transition">Audio & VAD</a></li>
+          <li><a href="#output-config" class="text-ink/70 hover:text-ink transition">Output Modes</a></li>
+        </ul>
+      </div>
+      <div>
+        <p class="text-xs font-semibold uppercase tracking-[0.2em] text-ink/50 mb-3">Advanced</p>
+        <ul class="space-y-2 text-sm">
+          <li><a href="#daemon-management" class="text-ink/70 hover:text-ink transition">Daemon Management</a></li>
+          <li><a href="#gpu-acceleration" class="text-ink/70 hover:text-ink transition">GPU Acceleration</a></li>
+          <li><a href="#environment-vars" class="text-ink/70 hover:text-ink transition">Environment Variables</a></li>
+        </ul>
+      </div>
+      <div>
+        <p class="text-xs font-semibold uppercase tracking-[0.2em] text-ink/50 mb-3">Troubleshooting</p>
+        <ul class="space-y-2 text-sm">
+          <li><a href="#common-issues" class="text-ink/70 hover:text-ink transition">Common Issues</a></li>
+          <li><a href="#debugging" class="text-ink/70 hover:text-ink transition">Debugging</a></li>
+          <li><a href="#audio-problems" class="text-ink/70 hover:text-ink transition">Audio Problems</a></li>
+        </ul>
+      </div>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="space-y-16">
+      <!-- Header -->
+      <div class="border-b border-ink/10 pb-8">
+        <p class="text-xs font-semibold uppercase tracking-[0.2em] text-ink/50">Documentation</p>
+        <h1 class="mt-4 font-display text-4xl font-semibold text-ink">Everything you need to know.</h1>
+        <p class="mt-4 text-lg text-ink/70 max-w-2xl">
+          Learn how to configure Soundvibes, set up your ideal workflow, and troubleshoot common issues.
+        </p>
+      </div>
+
+      <!-- Quick Start -->
+      <section id="quickstart" class="space-y-6">
+        <h2 class="font-display text-2xl font-semibold text-ink">Quick Start</h2>
+        <p class="text-ink/70">
+          Get up and running with just two commands. Soundvibes uses a daemon/client architecture where the daemon handles transcription and the client sends toggle commands.
+        </p>
+        
+        <div class="grid gap-4 sm:grid-cols-2">
+          <div class="glass-card rounded-2xl p-5">
+            <p class="text-xs font-semibold uppercase tracking-[0.2em] text-ink/50 mb-2">Step 1</p>
+            <p class="font-semibold text-ink mb-2">Start the daemon</p>
+            <code class="block rounded-lg bg-ink/5 px-3 py-2 font-mono text-sm text-ink">sv daemon start</code>
+            <p class="mt-2 text-sm text-ink/60">Launches the background service and downloads models on first run.</p>
+          </div>
+          <div class="glass-card rounded-2xl p-5">
+            <p class="text-xs font-semibold uppercase tracking-[0.2em] text-ink/50 mb-2">Step 2</p>
+            <p class="font-semibold text-ink mb-2">Toggle recording</p>
+            <code class="block rounded-lg bg-ink/5 px-3 py-2 font-mono text-sm text-ink">sv</code>
+            <p class="mt-2 text-sm text-ink/60">Run this to start/stop capture. Bind it to a hotkey for easy access.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Installation -->
+      <section id="installation" class="space-y-6">
+        <h2 class="font-display text-2xl font-semibold text-ink">Installation</h2>
+        
+        <div class="space-y-4">
+          <h3 class="font-semibold text-ink">Automatic Install</h3>
+          <p class="text-ink/70">
+            The install script auto-detects your distribution, installs dependencies, downloads the binary, and sets up configuration.
+          </p>
+          <div class="rounded-xl bg-ink px-4 py-3">
+            <code class="font-mono text-sm text-white">curl -fsSL https://raw.githubusercontent.com/kejne/soundvibes/main/install.sh | sh</code>
+          </div>
+          
+          <h3 class="font-semibold text-ink mt-6">System Requirements</h3>
+          <ul class="grid gap-2 text-sm text-ink/70 sm:grid-cols-2">
+            <li class="flex items-center gap-2">
+              <span class="h-2 w-2 rounded-full bg-mint"></span>
+              Linux x86_64
+            </li>
+            <li class="flex items-center gap-2">
+              <span class="h-2 w-2 rounded-full bg-citrus"></span>
+              Working microphone
+            </li>
+            <li class="flex items-center gap-2">
+              <span class="h-2 w-2 rounded-full bg-coral"></span>
+              Vulkan libraries (optional)
+            </li>
+            <li class="flex items-center gap-2">
+              <span class="h-2 w-2 rounded-full bg-ink"></span>
+              wtype (Wayland) or xdotool (X11) for injection
+            </li>
+          </ul>
+
+          <h3 class="font-semibold text-ink mt-6">Runtime Dependencies (Pre-built Binary)</h3>
+          <p class="text-sm text-ink/70 mb-3">
+            If you install via the install script or download the binary from GitHub Releases, you only need these runtime libraries:
+          </p>
+          <div class="space-y-3">
+            <div class="glass-card rounded-xl p-4">
+              <p class="font-semibold text-ink text-sm mb-2">Arch Linux</p>
+              <code class="block rounded-lg bg-ink/5 px-3 py-2 font-mono text-xs text-ink/80">
+                sudo pacman -Syu alsa-lib vulkan-icd-loader
+              </code>
+            </div>
+            <div class="glass-card rounded-xl p-4">
+              <p class="font-semibold text-ink text-sm mb-2">Ubuntu/Debian</p>
+              <code class="block rounded-lg bg-ink/5 px-3 py-2 font-mono text-xs text-ink/80">
+                sudo apt-get install -y libasound2 libvulkan1 mesa-vulkan-drivers
+              </code>
+            </div>
+            <div class="glass-card rounded-xl p-4">
+              <p class="font-semibold text-ink text-sm mb-2">Fedora</p>
+              <code class="block rounded-lg bg-ink/5 px-3 py-2 font-mono text-xs text-ink/80">
+                sudo dnf install -y alsa-lib vulkan-loader mesa-vulkan-drivers
+              </code>
+            </div>
+          </div>
+
+          <div class="glass-card rounded-xl p-4 mt-4 bg-citrus/10">
+            <p class="font-semibold text-ink text-sm mb-2">GPU Drivers (Optional)</p>
+            <p class="text-xs text-ink/70">
+              For GPU acceleration, also install GPU drivers. The above includes Mesa for AMD/Intel. 
+              For NVIDIA, install proprietary drivers with Vulkan support. See 
+              <a href="#gpu-acceleration" class="underline">GPU Acceleration</a> section for details.
+            </p>
+          </div>
+
+          <p class="text-sm text-ink/60 mt-4">
+            <strong>Building from source?</strong> See 
+            <a href="https://github.com/kejne/soundvibes/blob/main/CONTRIBUTING.md" class="underline text-ink/80">CONTRIBUTING.md</a> 
+            for development dependencies.
+          </p>
+        </div>
+      </section>
+
+      <!-- Workflow Setup -->
+      <section id="workflow-setup" class="space-y-6">
+        <h2 class="font-display text-2xl font-semibold text-ink">Setting Up Your Workflow</h2>
+        <p class="text-ink/70">
+          The power of Soundvibes comes from binding the <code class="rounded bg-ink/10 px-1 py-0.5 font-mono text-sm">sv</code> command to a hotkey. Here are setup instructions for popular desktop environments.
+        </p>
+
+        <div class="space-y-4">
+          <div class="glass-card rounded-2xl p-5">
+            <p class="font-semibold text-ink mb-2">GNOME / KDE / XFCE</p>
+            <p class="text-sm text-ink/70 mb-3">
+              Go to Settings → Keyboard → Custom Shortcuts. Add a new shortcut with:
+            </p>
+            <ul class="text-sm text-ink/70 space-y-1 ml-4">
+              <li>• Command: <code class="font-mono">sv</code></li>
+              <li>• Binding: Your preferred key (e.g., Ctrl+Alt+Space, F12)</li>
+            </ul>
+          </div>
+
+          <div class="glass-card rounded-2xl p-5">
+            <p class="font-semibold text-ink mb-2">i3 / Sway (Window Managers)</p>
+            <p class="text-sm text-ink/70 mb-3">Add to your config file:</p>
+            <code class="block rounded-lg bg-ink/5 px-3 py-2 font-mono text-sm text-ink/80">
+              bindsym $mod+Shift+v exec sv
+            </code>
+          </div>
+
+          <div class="glass-card rounded-2xl p-5">
+            <p class="font-semibold text-ink mb-2">Hyprland</p>
+            <p class="text-sm text-ink/70 mb-3">Add to <code class="font-mono">hyprland.conf</code>:</p>
+            <code class="block rounded-lg bg-ink/5 px-3 py-2 font-mono text-sm text-ink/80">
+              bind = $mainMod, V, exec, sv
+            </code>
+          </div>
+
+          <div class="glass-card rounded-2xl p-5">
+            <p class="font-semibold text-ink mb-2">Auto-start the Daemon</p>
+            <p class="text-sm text-ink/70 mb-3">
+              To start the daemon automatically on login, add to your desktop environment's startup applications:
+            </p>
+            <code class="block rounded-lg bg-ink/5 px-3 py-2 font-mono text-sm text-ink/80">
+              sv daemon start
+            </code>
+            <p class="text-sm text-ink/60 mt-2">
+              Or use systemd: <code class="font-mono">systemctl --user enable --now soundvibes</code> (if you ran the install script with service setup)
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Configuration File -->
+      <section id="config-file" class="space-y-6">
+        <h2 class="font-display text-2xl font-semibold text-ink">Configuration File</h2>
+        <p class="text-ink/70">
+          Soundvibes uses a TOML configuration file located at <code class="font-mono text-sm">~/.config/soundvibes/config.toml</code>. 
+          CLI flags override config file values, which override defaults.
+        </p>
+
+        <div class="glass-card rounded-2xl p-5">
+          <p class="text-xs font-semibold uppercase tracking-[0.2em] text-ink/50 mb-3">Complete Example</p>
+          <pre class="rounded-lg bg-ink/5 px-4 py-3 font-mono text-xs text-ink/80 overflow-x-auto"><code># Model configuration
+model = "/home/user/.local/share/soundvibes/models/ggml-small.bin"
+model_size = "small"           # tiny, base, small, medium, large
+model_language = "auto"        # auto, en
+download_model = true          # Allow auto-download on first run
+
+# Transcription settings
+language = "en"                # Transcription language code
+device = "default"             # Audio device name
+audio_host = "alsa"            # default, alsa
+sample_rate = 16000            # Hz (16000 recommended)
+
+# Output settings
+format = "plain"               # plain, jsonl
+mode = "inject"                # stdout, inject
+
+# VAD (Voice Activity Detection) settings
+vad = "on"                     # on, off (or true/false)
+vad_silence_ms = 1200          # Silence timeout in milliseconds
+vad_threshold = 0.01           # Energy threshold (0.001 - 0.1)
+vad_chunk_ms = 100             # Chunk size in milliseconds
+
+# Debug settings
+debug_audio = false
+debug_vad = false
+dump_audio = false             # Save captured audio to WAV
+list_devices = false</code></pre>
+        </div>
+
+        <div class="grid gap-4 sm:grid-cols-3">
+          <div class="glass-card rounded-xl p-4">
+            <p class="text-xs font-semibold uppercase tracking-[0.2em] text-ink/50">Priority 1</p>
+            <p class="mt-2 font-semibold text-ink text-sm">CLI Flags</p>
+            <p class="text-xs text-ink/60 mt-1">Highest priority, overrides everything</p>
+          </div>
+          <div class="glass-card rounded-xl p-4">
+            <p class="text-xs font-semibold uppercase tracking-[0.2em] text-ink/50">Priority 2</p>
+            <p class="mt-2 font-semibold text-ink text-sm">Config File</p>
+            <p class="text-xs text-ink/60 mt-1">~/.config/soundvibes/config.toml</p>
+          </div>
+          <div class="glass-card rounded-xl p-4">
+            <p class="text-xs font-semibold uppercase tracking-[0.2em] text-ink/50">Priority 3</p>
+            <p class="mt-2 font-semibold text-ink text-sm">Defaults</p>
+            <p class="text-xs text-ink/60 mt-1">Built-in fallback values</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- CLI Reference -->
+      <section id="cli-reference" class="space-y-6">
+        <h2 class="font-display text-2xl font-semibold text-ink">CLI Reference</h2>
+
+        <div class="space-y-4">
+          <div class="glass-card rounded-2xl p-5">
+            <p class="font-semibold text-ink mb-3">Global Options</p>
+            <div class="overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead>
+                  <tr class="border-b border-ink/10">
+                    <th class="py-2 pr-4 text-left font-semibold text-ink">Option</th>
+                    <th class="py-2 pr-4 text-left font-semibold text-ink">Default</th>
+                    <th class="py-2 text-left font-semibold text-ink">Description</th>
+                  </tr>
+                </thead>
+                <tbody class="text-ink/70">
+                  <tr class="border-b border-ink/5">
+                    <td class="py-2 pr-4 font-mono text-xs">--model</td>
+                    <td class="py-2 pr-4">-</td>
+                    <td class="py-2">Path to whisper model file (ggml format)</td>
+                  </tr>
+                  <tr class="border-b border-ink/5">
+                    <td class="py-2 pr-4 font-mono text-xs">--model-size</td>
+                    <td class="py-2 pr-4">small</td>
+                    <td class="py-2">tiny, base, small, medium, large</td>
+                  </tr>
+                  <tr class="border-b border-ink/5">
+                    <td class="py-2 pr-4 font-mono text-xs">--model-language</td>
+                    <td class="py-2 pr-4">auto</td>
+                    <td class="py-2">auto, en (English-only models)</td>
+                  </tr>
+                  <tr class="border-b border-ink/5">
+                    <td class="py-2 pr-4 font-mono text-xs">--language</td>
+                    <td class="py-2 pr-4">en</td>
+                    <td class="py-2">Transcription language code</td>
+                  </tr>
+                  <tr class="border-b border-ink/5">
+                    <td class="py-2 pr-4 font-mono text-xs">--device</td>
+                    <td class="py-2 pr-4">-</td>
+                    <td class="py-2">Audio input device name</td>
+                  </tr>
+                  <tr class="border-b border-ink/5">
+                    <td class="py-2 pr-4 font-mono text-xs">--audio-host</td>
+                    <td class="py-2 pr-4">alsa</td>
+                    <td class="py-2">default, alsa</td>
+                  </tr>
+                  <tr class="border-b border-ink/5">
+                    <td class="py-2 pr-4 font-mono text-xs">--sample-rate</td>
+                    <td class="py-2 pr-4">16000</td>
+                    <td class="py-2">Sample rate in Hz</td>
+                  </tr>
+                  <tr class="border-b border-ink/5">
+                    <td class="py-2 pr-4 font-mono text-xs">--format</td>
+                    <td class="py-2 pr-4">plain</td>
+                    <td class="py-2">Output format: plain, jsonl</td>
+                  </tr>
+                  <tr class="border-b border-ink/5">
+                    <td class="py-2 pr-4 font-mono text-xs">--mode</td>
+                    <td class="py-2 pr-4">inject</td>
+                    <td class="py-2">Output mode: stdout, inject</td>
+                  </tr>
+                  <tr class="border-b border-ink/5">
+                    <td class="py-2 pr-4 font-mono text-xs">--vad</td>
+                    <td class="py-2 pr-4">on</td>
+                    <td class="py-2">Voice Activity Detection: on, off</td>
+                  </tr>
+                  <tr class="border-b border-ink/5">
+                    <td class="py-2 pr-4 font-mono text-xs">--vad-silence-ms</td>
+                    <td class="py-2 pr-4">1200</td>
+                    <td class="py-2">VAD silence timeout (ms)</td>
+                  </tr>
+                  <tr class="border-b border-ink/5">
+                    <td class="py-2 pr-4 font-mono text-xs">--vad-threshold</td>
+                    <td class="py-2 pr-4">0.010</td>
+                    <td class="py-2">VAD energy threshold</td>
+                  </tr>
+                  <tr class="border-b border-ink/5">
+                    <td class="py-2 pr-4 font-mono text-xs">--vad-chunk-ms</td>
+                    <td class="py-2 pr-4">100</td>
+                    <td class="py-2">VAD chunk size (ms)</td>
+                  </tr>
+                  <tr class="border-b border-ink/5">
+                    <td class="py-2 pr-4 font-mono text-xs">--list-devices</td>
+                    <td class="py-2 pr-4">false</td>
+                    <td class="py-2">List available input devices</td>
+                  </tr>
+                  <tr>
+                    <td class="py-2 pr-4 font-mono text-xs">--debug-audio, --debug-vad, --dump-audio</td>
+                    <td class="py-2 pr-4">false</td>
+                    <td class="py-2">Debug logging options</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="glass-card rounded-2xl p-5">
+            <p class="font-semibold text-ink mb-3">Subcommands</p>
+            <div class="space-y-3">
+              <div class="rounded-lg bg-ink/5 px-3 py-2">
+                <p class="font-mono text-sm text-ink">sv daemon start</p>
+                <p class="text-xs text-ink/60 mt-1">Start the background daemon process</p>
+              </div>
+              <div class="rounded-lg bg-ink/5 px-3 py-2">
+                <p class="font-mono text-sm text-ink">sv daemon stop</p>
+                <p class="text-xs text-ink/60 mt-1">Stop the daemon gracefully</p>
+              </div>
+              <div class="rounded-lg bg-ink/5 px-3 py-2">
+                <p class="font-mono text-sm text-ink">sv daemon set-model --size &lt;SIZE&gt; --model-language &lt;LANG&gt;</p>
+                <p class="text-xs text-ink/60 mt-1">Change model while daemon is running</p>
+              </div>
+              <div class="rounded-lg bg-ink/5 px-3 py-2">
+                <p class="font-mono text-sm text-ink">sv (no arguments)</p>
+                <p class="text-xs text-ink/60 mt-1">Send toggle command to daemon (start/stop recording)</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Model Configuration -->
+      <section id="model-config" class="space-y-6">
+        <h2 class="font-display text-2xl font-semibold text-ink">Model Settings</h2>
+        <p class="text-ink/70">
+          Soundvibes uses Whisper models from HuggingFace. Models download automatically on first run, or you can download them manually.
+        </p>
+
+        <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div class="glass-card rounded-xl p-4">
+            <p class="text-xs font-semibold uppercase tracking-[0.2em] text-ink/50">tiny</p>
+            <p class="mt-2 font-semibold text-ink">Fastest, least accurate</p>
+            <p class="text-xs text-ink/60 mt-1">~39 MB • Good for testing</p>
+          </div>
+          <div class="glass-card rounded-xl p-4">
+            <p class="text-xs font-semibold uppercase tracking-[0.2em] text-ink/50">base</p>
+            <p class="mt-2 font-semibold text-ink">Fast with decent accuracy</p>
+            <p class="text-xs text-ink/60 mt-1">~74 MB • Balanced option</p>
+          </div>
+          <div class="glass-card rounded-xl p-4 border-2 border-mint/30">
+            <p class="text-xs font-semibold uppercase tracking-[0.2em] text-ink/50">small ⭐</p>
+            <p class="mt-2 font-semibold text-ink">Recommended default</p>
+            <p class="text-xs text-ink/60 mt-1">~244 MB • Best balance</p>
+          </div>
+          <div class="glass-card rounded-xl p-4">
+            <p class="text-xs font-semibold uppercase tracking-[0.2em] text-ink/50">medium</p>
+            <p class="mt-2 font-semibold text-ink">High accuracy</p>
+            <p class="text-xs text-ink/60 mt-1">~769 MB • Slower but better</p>
+          </div>
+          <div class="glass-card rounded-xl p-4">
+            <p class="text-xs font-semibold uppercase tracking-[0.2em] text-ink/50">large</p>
+            <p class="mt-2 font-semibold text-ink">Best accuracy</p>
+            <p class="text-xs text-ink/60 mt-1">~1.5 GB • Slowest, most accurate</p>
+          </div>
+        </div>
+
+        <div class="glass-card rounded-2xl p-5">
+          <p class="font-semibold text-ink mb-3">Model Language Variants</p>
+          <ul class="space-y-2 text-sm text-ink/70">
+            <li class="flex items-start gap-2">
+              <span class="h-2 w-2 rounded-full bg-mint mt-1.5"></span>
+              <span><strong>auto</strong> (default): Multilingual models that support 99 languages. Slightly larger but more flexible.</span>
+            </li>
+            <li class="flex items-start gap-2">
+              <span class="h-2 w-2 rounded-full bg-citrus mt-1.5"></span>
+              <span><strong>en</strong>: English-only models. Smaller and faster for English transcription, but cannot handle other languages.</span>
+            </li>
+          </ul>
+        </div>
+
+        <div class="glass-card rounded-2xl p-5">
+          <p class="font-semibold text-ink mb-3">Model Storage</p>
+          <p class="text-sm text-ink/70 mb-2">
+            Models are stored in: <code class="font-mono">~/.local/share/soundvibes/models/</code>
+          </p>
+          <p class="text-sm text-ink/70">
+            You can override the download URL with the <code class="font-mono">SV_MODEL_BASE_URL</code> environment variable for custom mirrors or offline setups.
+          </p>
+        </div>
+      </section>
+
+      <!-- Audio & VAD Configuration -->
+      <section id="audio-config" class="space-y-6">
+        <h2 class="font-display text-2xl font-semibold text-ink">Audio & VAD Configuration</h2>
+
+        <div class="glass-card rounded-2xl p-5">
+          <p class="font-semibold text-ink mb-3">Audio Devices</p>
+          <p class="text-sm text-ink/70 mb-3">
+            List available devices to find the correct name for your microphone:
+          </p>
+          <code class="block rounded-lg bg-ink/5 px-3 py-2 font-mono text-sm text-ink">sv --list-devices</code>
+          <p class="text-sm text-ink/70 mt-3">
+            Then set it in your config: <code class="font-mono">device = "Your Device Name"</code>
+          </p>
+        </div>
+
+        <div class="glass-card rounded-2xl p-5">
+          <p class="font-semibold text-ink mb-3">Voice Activity Detection (VAD)</p>
+          <p class="text-sm text-ink/70 mb-3">
+            VAD automatically trims silence from the end of recordings. Configure these settings to match your environment:
+          </p>
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="border-b border-ink/10">
+                  <th class="py-2 pr-4 text-left font-semibold text-ink">Setting</th>
+                  <th class="py-2 pr-4 text-left font-semibold text-ink">Default</th>
+                  <th class="py-2 text-left font-semibold text-ink">Description</th>
+                </tr>
+              </thead>
+              <tbody class="text-ink/70">
+                <tr class="border-b border-ink/5">
+                  <td class="py-2 pr-4 font-mono text-xs">vad_silence_ms</td>
+                  <td class="py-2 pr-4">1200</td>
+                  <td class="py-2">How long to wait after speech stops before ending (ms)</td>
+                </tr>
+                <tr class="border-b border-ink/5">
+                  <td class="py-2 pr-4 font-mono text-xs">vad_threshold</td>
+                  <td class="py-2 pr-4">0.010</td>
+                  <td class="py-2">Energy threshold for detecting speech (0.001 - 0.1)</td>
+                </tr>
+                <tr>
+                  <td class="py-2 pr-4 font-mono text-xs">vad_chunk_ms</td>
+                  <td class="py-2 pr-4">100</td>
+                  <td class="py-2">Audio chunk size for VAD analysis (ms)</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="grid gap-4 sm:grid-cols-2">
+          <div class="glass-card rounded-xl p-4">
+            <p class="font-semibold text-ink text-sm mb-2">Quiet Environment</p>
+            <p class="text-xs text-ink/70">Lower threshold for better sensitivity:</p>
+            <code class="block rounded-lg bg-ink/5 px-3 py-2 font-mono text-xs text-ink/80 mt-2">vad_threshold = 0.005</code>
+          </div>
+          <div class="glass-card rounded-xl p-4">
+            <p class="font-semibold text-ink text-sm mb-2">Noisy Environment</p>
+            <p class="text-xs text-ink/70">Higher threshold to reduce false triggers:</p>
+            <code class="block rounded-lg bg-ink/5 px-3 py-2 font-mono text-xs text-ink/80 mt-2">vad_threshold = 0.02</code>
+          </div>
+        </div>
+      </section>
+
+      <!-- Output Configuration -->
+      <section id="output-config" class="space-y-6">
+        <h2 class="font-display text-2xl font-semibold text-ink">Output Modes & Formats</h2>
+
+        <div class="grid gap-4 sm:grid-cols-2">
+          <div class="glass-card rounded-xl p-5">
+            <p class="text-xs font-semibold uppercase tracking-[0.2em] text-ink/50 mb-2">Mode: inject</p>
+            <p class="font-semibold text-ink mb-2">Type text at cursor (default)</p>
+            <p class="text-sm text-ink/70">
+              Transcribed text is automatically typed at your cursor position. Uses wtype on Wayland or xdotool on X11.
+            </p>
+          </div>
+          <div class="glass-card rounded-xl p-5">
+            <p class="text-xs font-semibold uppercase tracking-[0.2em] text-ink/50 mb-2">Mode: stdout</p>
+            <p class="font-semibold text-ink mb-2">Print to terminal</p>
+            <p class="text-sm text-ink/70">
+              Output goes to standard output. Useful for piping to other commands or scripts.
+            </p>
+          </div>
+        </div>
+
+        <div class="grid gap-4 sm:grid-cols-2">
+          <div class="glass-card rounded-xl p-5">
+            <p class="text-xs font-semibold uppercase tracking-[0.2em] text-ink/50 mb-2">Format: plain</p>
+            <p class="font-semibold text-ink mb-2">Simple text output</p>
+            <p class="text-sm text-ink/70">
+              Just the transcribed text, no extra formatting or metadata.
+            </p>
+          </div>
+          <div class="glass-card rounded-xl p-5">
+            <p class="text-xs font-semibold uppercase tracking-[0.2em] text-ink/50 mb-2">Format: jsonl</p>
+            <p class="font-semibold text-ink mb-2">Structured JSON lines</p>
+            <p class="text-sm text-ink/70">
+              Each utterance as JSON with type, text, timestamp, utterance, duration_ms fields.
+            </p>
+          </div>
+        </div>
+
+        <div class="glass-card rounded-2xl p-5">
+          <p class="font-semibold text-ink mb-3">Text Injection Requirements</p>
+          <p class="text-sm text-ink/70 mb-3">
+            For <code class="font-mono">mode = "inject"</code> to work, you need the appropriate tool for your display server:
+          </p>
+          <ul class="space-y-2 text-sm text-ink/70">
+            <li class="flex items-center gap-2">
+              <span class="h-2 w-2 rounded-full bg-mint"></span>
+              <strong>Wayland:</strong> Install <code class="font-mono">wtype</code> (virtual keyboard)
+            </li>
+            <li class="flex items-center gap-2">
+              <span class="h-2 w-2 rounded-full bg-citrus"></span>
+              <strong>X11:</strong> Install <code class="font-mono">xdotool</code> (XTest extension)
+            </li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- Daemon Management -->
+      <section id="daemon-management" class="space-y-6">
+        <h2 class="font-display text-2xl font-semibold text-ink">Daemon Management</h2>
+        <p class="text-ink/70">
+          The daemon runs in the background, listening on a Unix socket for toggle commands. It handles audio capture, VAD processing, and transcription.
+        </p>
+
+        <div class="space-y-4">
+          <div class="glass-card rounded-xl p-4">
+            <p class="font-semibold text-ink text-sm mb-2">Socket Location</p>
+            <code class="block rounded-lg bg-ink/5 px-3 py-2 font-mono text-sm text-ink/80">{"${XDG_RUNTIME_DIR}/soundvibes/sv.sock"}</code>
+            <p class="text-xs text-ink/60 mt-2">Usually resolves to /run/user/1000/soundvibes/sv.sock</p>
+          </div>
+
+          <div class="glass-card rounded-xl p-4">
+            <p class="font-semibold text-ink text-sm mb-2">Lifecycle Commands</p>
+            <div class="space-y-2 mt-2">
+              <div class="flex items-center justify-between rounded-lg bg-ink/5 px-3 py-2">
+                <code class="font-mono text-sm text-ink">sv daemon start</code>
+                <span class="text-xs text-ink/60">Launch daemon</span>
+              </div>
+              <div class="flex items-center justify-between rounded-lg bg-ink/5 px-3 py-2">
+                <code class="font-mono text-sm text-ink">sv daemon stop</code>
+                <span class="text-xs text-ink/60">Graceful shutdown</span>
+              </div>
+              <div class="flex items-center justify-between rounded-lg bg-ink/5 px-3 py-2">
+                <code class="font-mono text-sm text-ink">sv daemon set-model --size medium</code>
+                <span class="text-xs text-ink/60">Change model on-the-fly</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="glass-card rounded-xl p-4">
+            <p class="font-semibold text-ink text-sm mb-2">Auto-start on Login</p>
+            <p class="text-sm text-ink/70 mb-3">
+              The install script can set up a systemd user service. Or add to your desktop environment's startup:
+            </p>
+            <code class="block rounded-lg bg-ink/5 px-3 py-2 font-mono text-sm text-ink/80">
+              sv daemon start
+            </code>
+          </div>
+        </div>
+      </section>
+
+      <!-- GPU Acceleration -->
+      <section id="gpu-acceleration" class="space-y-6">
+        <h2 class="font-display text-2xl font-semibold text-ink">GPU Acceleration</h2>
+        <p class="text-ink/70">
+          Soundvibes uses Vulkan for GPU acceleration, providing significant speedups for transcription. It automatically falls back to CPU if GPU is unavailable.
+        </p>
+
+        <div class="space-y-4">
+          <div class="glass-card rounded-xl p-4">
+            <p class="font-semibold text-ink text-sm mb-2">GPU Drivers</p>
+            <div class="space-y-2 text-sm text-ink/70">
+              <p><strong>AMD:</strong> <code class="font-mono text-xs">vulkan-radeon</code> (Arch) or <code class="font-mono text-xs">mesa-vulkan-drivers</code> (Ubuntu/Fedora)</p>
+              <p><strong>NVIDIA:</strong> <code class="font-mono text-xs">nvidia-utils</code> (Arch) or <code class="font-mono text-xs">nvidia-driver</code> with Vulkan support</p>
+              <p><strong>Intel:</strong> <code class="font-mono text-xs">vulkan-intel</code> (limited support)</p>
+            </div>
+          </div>
+
+          <div class="glass-card rounded-xl p-4">
+            <p class="font-semibold text-ink text-sm mb-2">Verify Vulkan</p>
+            <code class="block rounded-lg bg-ink/5 px-3 py-2 font-mono text-sm text-ink/80">
+              vulkaninfo --summary
+            </code>
+            <p class="text-xs text-ink/60 mt-2">Should show your GPU in the device list</p>
+          </div>
+
+          <div class="glass-card rounded-xl p-4">
+            <p class="font-semibold text-ink text-sm mb-2">Performance Comparison</p>
+            <div class="mt-2 space-y-2 text-sm text-ink/70">
+              <div class="flex justify-between items-center">
+                <span>Small model on GPU</span>
+                <span class="font-semibold text-mint">~0.5-1x real-time</span>
+              </div>
+              <div class="flex justify-between items-center">
+                <span>Small model on CPU (8 threads)</span>
+                <span class="font-semibold text-citrus">~1-2x real-time</span>
+              </div>
+              <div class="flex justify-between items-center">
+                <span>Medium model on GPU</span>
+                <span class="font-semibold text-mint">~1-2x real-time</span>
+              </div>
+              <div class="flex justify-between items-center">
+                <span>Medium model on CPU</span>
+                <span class="font-semibold text-coral">~3-5x real-time</span>
+              </div>
+            </div>
+            <p class="text-xs text-ink/60 mt-3">
+              Lower is faster. GPU acceleration provides 3-5x speedup for larger models.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Environment Variables -->
+      <section id="environment-vars" class="space-y-6">
+        <h2 class="font-display text-2xl font-semibold text-ink">Environment Variables</h2>
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b border-ink/10">
+                <th class="py-2 pr-4 text-left font-semibold text-ink">Variable</th>
+                <th class="py-2 text-left font-semibold text-ink">Purpose</th>
+              </tr>
+            </thead>
+            <tbody class="text-ink/70">
+              <tr class="border-b border-ink/5">
+                <td class="py-2 pr-4 font-mono text-xs">SV_MODEL_PATH</td>
+                <td class="py-2">Override default model path</td>
+              </tr>
+              <tr class="border-b border-ink/5">
+                <td class="py-2 pr-4 font-mono text-xs">SV_MODEL_BASE_URL</td>
+                <td class="py-2">Custom model download mirror (e.g., for offline/airgapped setups)</td>
+              </tr>
+              <tr class="border-b border-ink/5">
+                <td class="py-2 pr-4 font-mono text-xs">XDG_CONFIG_HOME</td>
+                <td class="py-2">Config directory (default: ~/.config)</td>
+              </tr>
+              <tr class="border-b border-ink/5">
+                <td class="py-2 pr-4 font-mono text-xs">XDG_DATA_HOME</td>
+                <td class="py-2">Data directory for models (default: ~/.local/share)</td>
+              </tr>
+              <tr class="border-b border-ink/5">
+                <td class="py-2 pr-4 font-mono text-xs">XDG_RUNTIME_DIR</td>
+                <td class="py-2">Runtime directory for socket (default: /run/user/UID)</td>
+              </tr>
+              <tr>
+                <td class="py-2 pr-4 font-mono text-xs">SV_HARDWARE_TESTS, SV_GPU_TESTS, etc.</td>
+                <td class="py-2">Test environment flags (see testing docs)</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Troubleshooting -->
+      <section id="common-issues" class="space-y-6">
+        <h2 class="font-display text-2xl font-semibold text-ink">Troubleshooting</h2>
+
+        <div class="space-y-4">
+          <div class="glass-card rounded-2xl p-5">
+            <p class="font-semibold text-ink mb-3">Daemon Issues</p>
+            <div class="space-y-3">
+              <div class="rounded-lg bg-ink/5 px-3 py-2">
+                <p class="font-semibold text-sm text-ink">"Connection refused" or "No such file"</p>
+                <p class="text-xs text-ink/70 mt-1">The daemon isn't running. Start it with: <code class="font-mono">sv daemon start</code></p>
+              </div>
+              <div class="rounded-lg bg-ink/5 px-3 py-2">
+                <p class="font-semibold text-sm text-ink">Daemon won't start</p>
+                <p class="text-xs text-ink/70 mt-1">Check if another instance is running: <code class="font-mono">ps aux | grep sv</code>. Kill stale processes if needed.</p>
+              </div>
+              <div class="rounded-lg bg-ink/5 px-3 py-2">
+                <p class="font-semibold text-sm text-ink">Permission denied on socket</p>
+                <p class="text-xs text-ink/70 mt-1">Check <code class="font-mono">XDG_RUNTIME_DIR</code> is set and writable. Usually /run/user/1000.</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="glass-card rounded-2xl p-5">
+            <p class="font-semibold text-ink mb-3">Model Issues</p>
+            <div class="space-y-3">
+              <div class="rounded-lg bg-ink/5 px-3 py-2">
+                <p class="font-semibold text-sm text-ink">Model download fails</p>
+                <p class="text-xs text-ink/70 mt-1">Check internet connection or set <code class="font-mono">SV_MODEL_BASE_URL</code> to a mirror. You can also download manually to ~/.local/share/soundvibes/models/</p>
+              </div>
+              <div class="rounded-lg bg-ink/5 px-3 py-2">
+                <p class="font-semibold text-sm text-ink">"Model file not found"</p>
+                <p class="text-xs text-ink/70 mt-1">Either enable auto-download: <code class="font-mono">download_model = true</code> or specify a valid path with <code class="font-mono">--model</code></p>
+              </div>
+            </div>
+          </div>
+
+          <div class="glass-card rounded-2xl p-5">
+            <p class="font-semibold text-ink mb-3">Exit Codes</p>
+            <div class="space-y-1 text-sm text-ink/70">
+              <div class="flex justify-between items-center py-1 border-b border-ink/5">
+                <span class="font-mono">0</span>
+                <span>Success</span>
+              </div>
+              <div class="flex justify-between items-center py-1 border-b border-ink/5">
+                <span class="font-mono">1</span>
+                <span>Runtime error (general)</span>
+              </div>
+              <div class="flex justify-between items-center py-1 border-b border-ink/5">
+                <span class="font-mono">2</span>
+                <span>Config or model error</span>
+              </div>
+              <div class="flex justify-between items-center py-1">
+                <span class="font-mono">3</span>
+                <span>Audio device error</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Debugging -->
+      <section id="debugging" class="space-y-6">
+        <h2 class="font-display text-2xl font-semibold text-ink">Debugging</h2>
+
+        <div class="space-y-4">
+          <div class="glass-card rounded-2xl p-5">
+            <p class="font-semibold text-ink mb-3">Debug Flags</p>
+            <p class="text-sm text-ink/70 mb-3">Enable detailed logging to diagnose issues:</p>
+            <div class="space-y-2">
+              <div class="rounded-lg bg-ink/5 px-3 py-2">
+                <p class="font-mono text-sm text-ink">--debug-audio</p>
+                <p class="text-xs text-ink/60 mt-1">Log audio capture details, device selection, and sample rates</p>
+              </div>
+              <div class="rounded-lg bg-ink/5 px-3 py-2">
+                <p class="font-mono text-sm text-ink">--debug-vad</p>
+                <p class="text-xs text-ink/60 mt-1">Log VAD decisions, energy levels, and trimming behavior</p>
+              </div>
+              <div class="rounded-lg bg-ink/5 px-3 py-2">
+                <p class="font-mono text-sm text-ink">--dump-audio</p>
+                <p class="text-xs text-ink/60 mt-1">Save captured audio to WAV file for inspection</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="glass-card rounded-2xl p-5">
+            <p class="font-semibold text-ink mb-3">Example Debug Session</p>
+            <pre class="rounded-lg bg-ink/5 px-4 py-3 font-mono text-xs text-ink/80 overflow-x-auto"><code># Start daemon with debug logging
+sv daemon start --debug-audio --debug-vad
+
+# In another terminal, toggle capture
+sv
+
+# Check logs in ~/.local/share/soundvibes/logs/ or console output</code></pre>
+          </div>
+        </div>
+      </section>
+
+      <!-- Audio Problems -->
+      <section id="audio-problems" class="space-y-6">
+        <h2 class="font-display text-2xl font-semibold text-ink">Audio Problems</h2>
+
+        <div class="space-y-4">
+          <div class="glass-card rounded-2xl p-5">
+            <p class="font-semibold text-ink mb-3">Device Not Found</p>
+            <p class="text-sm text-ink/70 mb-3">List all available devices and verify your microphone is detected:</p>
+            <code class="block rounded-lg bg-ink/5 px-3 py-2 font-mono text-sm text-ink/80">
+              sv --list-devices
+            </code>
+            <p class="text-sm text-ink/70 mt-3">
+              If your device isn't listed, check ALSA/PulseAudio configuration and ensure the device isn't muted.
+            </p>
+          </div>
+
+          <div class="glass-card rounded-2xl p-5">
+            <p class="font-semibold text-ink mb-3">No Audio Captured</p>
+            <ul class="space-y-2 text-sm text-ink/70">
+              <li class="flex items-start gap-2">
+                <span class="h-2 w-2 rounded-full bg-coral mt-1.5"></span>
+                <span>Check microphone isn't muted in your system mixer (alsamixer, pavucontrol)</span>
+              </li>
+              <li class="flex items-start gap-2">
+                <span class="h-2 w-2 rounded-full bg-coral mt-1.5"></span>
+                <span>Verify the correct device is selected with <code class="font-mono">--device</code> or config</span>
+              </li>
+              <li class="flex items-start gap-2">
+                <span class="h-2 w-2 rounded-full bg-coral mt-1.5"></span>
+                <span>Use <code class="font-mono">--dump-audio</code> to verify audio is being captured</span>
+              </li>
+              <li class="flex items-start gap-2">
+                <span class="h-2 w-2 rounded-full bg-coral mt-1.5"></span>
+                <span>Check VAD threshold isn't too high for quiet speech</span>
+              </li>
+            </ul>
+          </div>
+
+          <div class="glass-card rounded-2xl p-5">
+            <p class="font-semibold text-ink mb-3">Poor Transcription Quality</p>
+            <ul class="space-y-2 text-sm text-ink/70">
+              <li class="flex items-start gap-2">
+                <span class="h-2 w-2 rounded-full bg-citrus mt-1.5"></span>
+                <span>Try a larger model (medium or large) for better accuracy</span>
+              </li>
+              <li class="flex items-start gap-2">
+                <span class="h-2 w-2 rounded-full bg-citrus mt-1.5"></span>
+                <span>Ensure <code class="font-mono">language</code> matches your spoken language</span>
+              </li>
+              <li class="flex items-start gap-2">
+                <span class="h-2 w-2 rounded-full bg-citrus mt-1.5"></span>
+                <span>Reduce background noise or use a better microphone</span>
+              </li>
+              <li class="flex items-start gap-2">
+                <span class="h-2 w-2 rounded-full bg-citrus mt-1.5"></span>
+                <span>Speak clearly and at a consistent volume</span>
+              </li>
+            </ul>
+          </div>
+
+          <div class="glass-card rounded-2xl p-5">
+            <p class="font-semibold text-ink mb-3">Text Injection Not Working</p>
+            <ul class="space-y-2 text-sm text-ink/70">
+              <li class="flex items-start gap-2">
+                <span class="h-2 w-2 rounded-full bg-mint mt-1.5"></span>
+                <span>Verify wtype (Wayland) or xdotool (X11) is installed</span>
+              </li>
+              <li class="flex items-start gap-2">
+                <span class="h-2 w-2 rounded-full bg-mint mt-1.5"></span>
+                <span>On Wayland, ensure your compositor supports virtual keyboard protocols</span>
+              </li>
+              <li class="flex items-start gap-2">
+                <span class="h-2 w-2 rounded-full bg-mint mt-1.5"></span>
+                <span>Some applications (especially browsers) may block synthetic input for security</span>
+              </li>
+              <li class="flex items-start gap-2">
+                <span class="h-2 w-2 rounded-full bg-mint mt-1.5"></span>
+                <span>Use <code class="font-mono">--mode stdout</code> as a workaround</span>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- Footer Note -->
+      <div class="border-t border-ink/10 pt-8 mt-8">
+        <p class="text-sm text-ink/60">
+          Still have questions? Check the <a href="https://github.com/kejne/soundvibes/blob/main/docs/technical-design.md" class="text-ink underline hover:text-ink/80">technical documentation</a> on GitHub.
+        </p>
+      </div>
+    </div>
+  </div>
+</BaseLayout>
+
+<style>
+  /* Smooth scrolling for anchor links */
+  html {
+    scroll-behavior: smooth;
+  }
+  
+  /* Offset for sticky header if needed */
+  section[id] {
+    scroll-margin-top: 2rem;
+  }
+</style>
