@@ -1,0 +1,69 @@
+name: Bug Report
+description: Report a bug in soundvibes
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug! Please fill out the information below to help us fix it.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what the bug is.
+      placeholder: "When I run sv record, it crashes with..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Steps to reproduce the behavior.
+      placeholder: |
+        1. Run command '...'
+        2. Press hotkey '...'
+        3. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: A clear and concise description of what you expected to happen.
+      placeholder: "I expected the recording to start..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: system
+    attributes:
+      label: System Information
+      description: |
+        Please provide the following information:
+        - OS (e.g., Ubuntu 24.04, Fedora 41)
+        - soundvibes version (`sv --version`)
+        - Audio hardware (if relevant)
+        - CPU architecture (x86_64, aarch64, etc.)
+      placeholder: |
+        - OS: Ubuntu 24.04
+        - soundvibes version: 0.5.0
+        - Audio: USB microphone
+        - Architecture: x86_64
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and Error Messages
+      description: If applicable, add error messages or logs (with sensitive info removed).
+      render: shell
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Add any other context about the problem here.
