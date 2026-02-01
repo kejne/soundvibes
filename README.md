@@ -1,12 +1,12 @@
 <div align="center">
   <img src="docs/assets/soundvibes.png" alt="SoundVibes Logo" width="200">
   <h1>SoundVibes (sv)</h1>
-  <p>Offline voice-to-text CLI for Linux</p>
+  <p>Open source voice-to-text for Linux</p>
 </div>
 
 ## Overview
 
-SoundVibes (sv) is an offline speech-to-text CLI for Linux. It captures audio from your microphone using start/stop toggles and transcribes locally using whisper.cpp. No cloud, no latency, no subscriptions.
+SoundVibes (sv) is an offline speech-to-text tool for Linux. It captures audio from your microphone using start/stop toggles and transcribes locally using whisper.cpp. No cloud, no latency, no subscriptions.
 
 ## Quick Start
 
