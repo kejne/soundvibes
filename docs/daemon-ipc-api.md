@@ -1,7 +1,7 @@
-# Notification Plugins API (Draft)
+# Daemon IPC API (Draft)
 
 ## Purpose
-Define a stable API for external notification plugins (any language) and a socket design that supports 0-n subscribers. This API also covers multi-language triggering so plugins can react to language-specific actions.
+Define the daemon IPC API, split into control commands and notification events. This covers external notification plugins (any language), a socket design that supports 0-n subscribers, and multi-language triggering so plugins can react to language-specific actions.
 
 ## Goals
 - Keep the core design simple and aligned with the existing Unix socket philosophy.
