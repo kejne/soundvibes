@@ -1,7 +1,7 @@
 # Notification Plugins API (Draft)
 
 ## Purpose
-Define a simple, stable API for external notification plugins (any language) and a socket design that supports 0-n subscribers. This API also covers multi-language triggering so plugins can react to language-specific actions.
+Define a stable API for external notification plugins (any language) and a socket design that supports 0-n subscribers. This API also covers multi-language triggering so plugins can react to language-specific actions.
 
 ## Goals
 - Keep the core design simple and aligned with the existing Unix socket philosophy.
@@ -20,7 +20,7 @@ Two Unix sockets are used:
 - Control socket: short-lived connections for commands (existing behavior).
 - Events socket: long-lived connections for event fan-out.
 
-Events are emitted by the daemon and broadcast to all connected plugin clients. Plugins are external processes that connect to the events socket, read JSONL messages, and react accordingly (tray, sound, blink, notifications, etc.). The daemon maintains a pool of loaded models; `toggle lang=...` selects a model from the pool.
+Events are emitted by the daemon and broadcast to all connected plugin clients. Plugins are external processes that connect to the events socket, read JSONL messages, and react accordingly.
 
 ## Socket Design
 
@@ -49,9 +49,6 @@ Events are emitted by the daemon and broadcast to all connected plugin clients. 
 ### Versioning
 - Each message includes `api_version` (string, e.g. "1")
 - Breaking changes bump `api_version`
-
-### Events Socket Connection
-Connecting to the events socket implies subscription. The daemon begins streaming events immediately after accepting the connection.
 
 ## Control Commands
 
@@ -203,7 +200,7 @@ Given a plugin is running
 When the daemon is not available
 Then the plugin retries connecting with backoff
 When the daemon starts
-Then the plugin completes the `subscribe` handshake and receives events
+Then the plugin reconnects and receives events
 
 ### Use Case: Toggle with explicit language
 Given the daemon is running
