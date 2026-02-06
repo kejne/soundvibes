@@ -466,6 +466,29 @@ fn at10_marketing_site_builds_and_smoke_test() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+#[test]
+fn at11_systemd_service_targets_graphical_session() {
+    let service_template = include_str!("../contrib/sv.service");
+    assert!(
+        service_template.contains("After=graphical-session.target"),
+        "service template must start after graphical session"
+    );
+    assert!(
+        service_template.contains("WantedBy=graphical-session.target"),
+        "service template must be wanted by graphical session"
+    );
+
+    let install_script = include_str!("../install.sh");
+    assert!(
+        install_script.contains("After=graphical-session.target"),
+        "installer fallback unit must start after graphical session"
+    );
+    assert!(
+        install_script.contains("WantedBy=graphical-session.target"),
+        "installer fallback unit must be wanted by graphical session"
+    );
+}
+
 fn command_available(command: &str) -> bool {
     Command::new(command)
         .arg("--version")

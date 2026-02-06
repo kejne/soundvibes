@@ -92,3 +92,9 @@ These tests validate the product behavior for the offline Linux CLI.
 - Command: `cargo test --test acceptance -- at10_marketing_site_builds_and_smoke_test`.
 - Expect: `web/` dependencies install, Astro builds, and the UI smoke test passes.
 - Pass: the acceptance test exits 0.
+
+### AT-11: Systemd service starts in graphical session
+- Setup: use the tracked systemd unit template and installer output.
+- Command: `cargo test --test acceptance -- at11_systemd_service_targets_graphical_session`.
+- Expect: service unit uses `After=graphical-session.target` and `WantedBy=graphical-session.target`.
+- Pass: both the template and installer fallback unit content are aligned with graphical session startup.
