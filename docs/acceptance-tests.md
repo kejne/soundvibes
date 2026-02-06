@@ -92,3 +92,21 @@ These tests validate the product behavior for the offline Linux CLI.
 - Command: `cargo test --test acceptance -- at10_marketing_site_builds_and_smoke_test`.
 - Expect: `web/` dependencies install, Astro builds, and the UI smoke test passes.
 - Pass: the acceptance test exits 0.
+
+### AT-11: Systemd service starts in graphical session
+- Setup: create a temp HOME with an existing `config.toml`, and run installer with mocked `curl`, `tar`, and `systemctl` to avoid network/system modifications.
+- Command: `cargo test --test acceptance -- at11_installer_is_idempotent_and_preserves_config`.
+- Expect: running installer twice succeeds, generated service unit uses `After=graphical-session.target` and `WantedBy=graphical-session.target`, and existing config content is unchanged.
+- Pass: test exits 0 with preserved config and graphical-session-targeted unit.
+
+### AT-11a: Installer detects display environment variants
+- Setup: run installer in sandbox with mocked external commands and scenario-specific environment variables.
+- Command: `cargo test --test acceptance -- at11a_installer_handles_display_environment_scenarios`.
+- Expect: Wayland, X11, and headless scenarios each report the expected display detection path.
+- Pass: test exits 0 and each scenario output includes the expected detection message.
+
+### AT-11b: Installer rejects unsupported platform
+- Setup: run installer in sandbox with a mocked `uname` returning a non-Linux platform.
+- Command: `cargo test --test acceptance -- at11b_installer_rejects_unsupported_platform`.
+- Expect: installer exits non-zero with a clear unsupported-platform error.
+- Pass: test exits non-zero and stderr includes `SoundVibes only supports Linux`.

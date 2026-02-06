@@ -35,10 +35,24 @@ pub fn inject_text(text: &str) -> Result<(), OutputError> {
         return Ok(());
     }
 
-    Err(OutputError::new(format!(
+    let mut message = format!(
         "no supported injection backends available ({})",
         errors.join("; ")
-    )))
+    );
+    if missing_graphical_session(&errors) {
+        message.push_str(
+            "; session environment missing (DISPLAY/WAYLAND_DISPLAY). If running via systemd user service, start it after graphical session (WantedBy=graphical-session.target)",
+        );
+    }
+
+    Err(OutputError::new(message))
+}
+
+fn missing_graphical_session(errors: &[String]) -> bool {
+    errors
+        .iter()
+        .any(|err| err == "wayland session not detected")
+        && errors.iter().any(|err| err == "x11 session not detected")
 }
 
 fn try_wayland(text: &str) -> Result<Option<String>, OutputError> {
@@ -158,5 +172,14 @@ mod tests {
         let _wayland_guard = EnvGuard::set("WAYLAND_DISPLAY", "wayland-0");
         let _display_guard = EnvGuard::remove("DISPLAY");
         assert!(has_wayland_session());
+    }
+
+    #[test]
+    fn detects_missing_graphical_session_errors() {
+        let errors = vec![
+            "wayland session not detected".to_string(),
+            "x11 session not detected".to_string(),
+        ];
+        assert!(missing_graphical_session(&errors));
     }
 }
