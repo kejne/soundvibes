@@ -1,6 +1,7 @@
 use chrono::{Local, Utc};
 use signal_hook::consts::signal::{SIGINT, SIGTERM};
 use signal_hook::flag;
+use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::io::{Read, Write};
@@ -140,6 +141,102 @@ pub struct ControlMessage {
     pub response: Option<mpsc::Sender<ipc::ControlResponse>>,
 }
 
+struct ModelPoolEntry {
+    transcriber: Box<dyn Transcriber>,
+    model_size: String,
+    model_language: String,
+}
+
+struct ModelPool {
+    entries: HashMap<String, ModelPoolEntry>,
+}
+
+impl ModelPool {
+    fn preload(config: &DaemonConfig, deps: &DaemonDeps) -> Result<Self, AppError> {
+        let mut pool = Self {
+            entries: HashMap::new(),
+        };
+
+        let mut preload_languages = config
+            .model_pool_languages
+            .iter()
+            .map(|language| normalize_language(language))
+            .collect::<Vec<_>>();
+        let active_language = normalize_language(&config.language);
+        if !preload_languages.contains(&active_language) {
+            preload_languages.push(active_language);
+        }
+
+        for language in preload_languages {
+            pool.load_language(&language, config, deps)?;
+        }
+
+        Ok(pool)
+    }
+
+    fn ensure_language(
+        &mut self,
+        language: &str,
+        config: &DaemonConfig,
+        deps: &DaemonDeps,
+    ) -> Result<bool, AppError> {
+        if self.entries.contains_key(language) {
+            return Ok(false);
+        }
+        self.load_language(language, config, deps)?;
+        Ok(true)
+    }
+
+    fn set_entry(
+        &mut self,
+        language: &str,
+        transcriber: Box<dyn Transcriber>,
+        model_size: String,
+        model_language: String,
+    ) {
+        self.entries.insert(
+            language.to_string(),
+            ModelPoolEntry {
+                transcriber,
+                model_size,
+                model_language,
+            },
+        );
+    }
+
+    fn transcriber_for(&self, language: &str) -> Option<&dyn Transcriber> {
+        self.entries
+            .get(language)
+            .map(|entry| entry.transcriber.as_ref())
+    }
+
+    fn metadata_for(&self, language: &str) -> Option<(&str, &str)> {
+        self.entries
+            .get(language)
+            .map(|entry| (entry.model_size.as_str(), entry.model_language.as_str()))
+    }
+
+    fn load_language(
+        &mut self,
+        language: &str,
+        config: &DaemonConfig,
+        deps: &DaemonDeps,
+    ) -> Result<(), AppError> {
+        let transcriber = deps
+            .transcriber_factory
+            .load(config.model_path.as_deref())?;
+        let model_language =
+            model_language_token(model::model_language_for_transcription(language));
+        self.set_entry(
+            language,
+            transcriber,
+            "configured".to_string(),
+            model_language.to_string(),
+        );
+        Ok(())
+    }
+}
+
 pub fn run_daemon(
     config: &DaemonConfig,
     deps: &DaemonDeps,
@@ -198,9 +295,7 @@ pub fn run_daemon_loop(
         }
     }
 
-    let mut transcriber = deps
-        .transcriber_factory
-        .load(config.model_path.as_deref())?;
+    let mut model_pool = ModelPool::preload(config, deps)?;
     let vad = audio::VadConfig::new(
         config.vad == VadMode::On,
         config.vad_silence_ms,
@@ -210,18 +305,20 @@ pub fn run_daemon_loop(
     );
 
     let mut recording = false;
-    let mut active_language = config.language.clone();
+    let mut active_language = normalize_language(&config.language);
     let mut buffer = Vec::new();
     let mut utterance_index = 0u64;
     let mut capture: Option<Box<dyn CaptureSource>> = None;
 
     emit_daemon_event(event_sender, ipc::DaemonEventType::DaemonReady);
+    emit_model_loaded_event(event_sender, &model_pool, &active_language);
 
     loop {
         if shutdown.load(Ordering::Relaxed) {
             if recording {
+                let active_transcriber = active_transcriber(&model_pool, active_language.as_str())?;
                 stop_recording(
-                    &*transcriber,
+                    active_transcriber,
                     config,
                     active_language.as_str(),
                     &vad,
@@ -246,13 +343,18 @@ pub fn run_daemon_loop(
                 let response = match message.event {
                     ControlEvent::Toggle { language } => {
                         if let Some(language) = language {
-                            active_language = language;
+                            let normalized = normalize_language(&language);
+                            model_pool.ensure_language(&normalized, config, deps)?;
+                            active_language = normalized;
+                            emit_model_loaded_event(event_sender, &model_pool, &active_language);
                         }
 
                         if recording {
                             recording = false;
+                            let active_transcriber =
+                                active_transcriber(&model_pool, active_language.as_str())?;
                             stop_recording(
-                                &*transcriber,
+                                active_transcriber,
                                 config,
                                 active_language.as_str(),
                                 &vad,
@@ -299,7 +401,10 @@ pub fn run_daemon_loop(
                         control_ok_response(state, active_language.as_str())
                     }
                     ControlEvent::SetLanguage { language } => {
-                        active_language = language;
+                        let normalized = normalize_language(&language);
+                        model_pool.ensure_language(&normalized, config, deps)?;
+                        active_language = normalized;
+                        emit_model_loaded_event(event_sender, &model_pool, &active_language);
                         let state = if recording { "recording" } else { "idle" };
                         control_ok_response(state, active_language.as_str())
                     }
@@ -335,22 +440,21 @@ pub fn run_daemon_loop(
                                 let new_path = prepared.path.clone();
                                 match deps.transcriber_factory.load(Some(&new_path)) {
                                     Ok(new_transcriber) => {
-                                        transcriber = new_transcriber;
+                                        model_pool.set_entry(
+                                            active_language.as_str(),
+                                            new_transcriber,
+                                            model_size_token(size).to_string(),
+                                            model_language_token(model_language).to_string(),
+                                        );
                                         output.stdout(&format!(
                                             "Model reloaded: size={}, model-language={}",
                                             model_size_token(size),
                                             model_language_token(model_language)
                                         ));
-                                        emit_daemon_event(
+                                        emit_model_loaded_event(
                                             event_sender,
-                                            ipc::DaemonEventType::ModelLoaded {
-                                                language: active_language.clone(),
-                                                model_size: model_size_token(size).to_string(),
-                                                model_language: model_language_token(
-                                                    model_language,
-                                                )
-                                                .to_string(),
-                                            },
+                                            &model_pool,
+                                            active_language.as_str(),
                                         );
                                         control_ok_response("idle", active_language.as_str())
                                     }
@@ -504,6 +608,39 @@ fn emit_daemon_event(sender: Option<&mpsc::Sender<ipc::DaemonEvent>>, event: ipc
     };
     let event = ipc::DaemonEvent::new(Utc::now().to_rfc3339(), event);
     let _ = sender.send(event);
+}
+
+fn emit_model_loaded_event(
+    sender: Option<&mpsc::Sender<ipc::DaemonEvent>>,
+    model_pool: &ModelPool,
+    language: &str,
+) {
+    let Some((model_size, model_language)) = model_pool.metadata_for(language) else {
+        return;
+    };
+    emit_daemon_event(
+        sender,
+        ipc::DaemonEventType::ModelLoaded {
+            language: language.to_string(),
+            model_size: model_size.to_string(),
+            model_language: model_language.to_string(),
+        },
+    );
+}
+
+fn active_transcriber<'a>(
+    model_pool: &'a ModelPool,
+    language: &str,
+) -> Result<&'a dyn Transcriber, AppError> {
+    model_pool.transcriber_for(language).ok_or_else(|| {
+        AppError::runtime(format!(
+            "no model loaded for language '{language}'; set-language first"
+        ))
+    })
+}
+
+fn normalize_language(language: &str) -> String {
+    language.trim().to_ascii_lowercase()
 }
 
 fn emit_transcript(
@@ -1033,7 +1170,7 @@ impl Transcriber for WhisperTranscriber {
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support {
     use std::collections::VecDeque;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::sync::mpsc;
     use std::sync::{Arc, Mutex};
 
@@ -1147,6 +1284,8 @@ pub mod test_support {
     #[derive(Clone)]
     pub struct TestTranscriberFactory {
         responses: Arc<Mutex<VecDeque<Result<String, AppError>>>>,
+        loaded_paths: Arc<Mutex<Vec<Option<PathBuf>>>>,
+        transcribe_languages: Arc<Mutex<Vec<Option<String>>>>,
     }
 
     impl TestTranscriberFactory {
@@ -1154,34 +1293,55 @@ pub mod test_support {
             let responses = responses.into_iter().map(Ok).collect();
             Self {
                 responses: Arc::new(Mutex::new(responses)),
+                loaded_paths: Arc::new(Mutex::new(Vec::new())),
+                transcribe_languages: Arc::new(Mutex::new(Vec::new())),
             }
         }
 
         pub fn with_results(responses: Vec<Result<String, AppError>>) -> Self {
             Self {
                 responses: Arc::new(Mutex::new(responses.into())),
+                loaded_paths: Arc::new(Mutex::new(Vec::new())),
+                transcribe_languages: Arc::new(Mutex::new(Vec::new())),
             }
+        }
+
+        pub fn load_count(&self) -> usize {
+            self.loaded_paths.lock().expect("loaded paths lock").len()
+        }
+
+        pub fn transcribed_languages(&self) -> Vec<Option<String>> {
+            self.transcribe_languages
+                .lock()
+                .expect("transcribed languages lock")
+                .clone()
         }
     }
 
     impl TranscriberFactory for TestTranscriberFactory {
-        fn load(&self, _model_path: Option<&Path>) -> Result<Box<dyn Transcriber>, AppError> {
+        fn load(&self, model_path: Option<&Path>) -> Result<Box<dyn Transcriber>, AppError> {
+            self.loaded_paths
+                .lock()
+                .expect("loaded paths lock")
+                .push(model_path.map(Path::to_path_buf));
             Ok(Box::new(TestTranscriber {
                 responses: Arc::clone(&self.responses),
+                transcribe_languages: Arc::clone(&self.transcribe_languages),
             }))
         }
     }
 
     struct TestTranscriber {
         responses: Arc<Mutex<VecDeque<Result<String, AppError>>>>,
+        transcribe_languages: Arc<Mutex<Vec<Option<String>>>>,
     }
 
     impl Transcriber for TestTranscriber {
-        fn transcribe(
-            &self,
-            _samples: &[f32],
-            _language: Option<&str>,
-        ) -> Result<String, AppError> {
+        fn transcribe(&self, _samples: &[f32], language: Option<&str>) -> Result<String, AppError> {
+            self.transcribe_languages
+                .lock()
+                .expect("transcribed languages lock")
+                .push(language.map(|value| value.to_string()));
             let next = self
                 .responses
                 .lock()
@@ -1544,6 +1704,153 @@ mod tests {
 
         assert_eq!(first_event, first_expected);
         assert_eq!(second_event, second_expected);
+        Ok(())
+    }
+
+    #[test]
+    fn model_pool_preloads_active_and_configured_languages() -> Result<(), AppError> {
+        let transcriber_factory = TestTranscriberFactory::new(Vec::new());
+        let deps = DaemonDeps {
+            audio: Box::new(TestAudioBackend::new(vec!["Mic".to_string()], Vec::new())),
+            transcriber_factory: Box::new(transcriber_factory.clone()),
+        };
+        let config = DaemonConfig {
+            model_path: None,
+            download_model: false,
+            language: "sv".to_string(),
+            model_pool_languages: vec!["en".to_string(), "fr".to_string()],
+            device: None,
+            audio_host: AudioHost::Default,
+            sample_rate: 16_000,
+            format: OutputFormat::Plain,
+            mode: OutputMode::Stdout,
+            vad: VadMode::Off,
+            vad_silence_ms: 800,
+            vad_threshold: 0.015,
+            vad_chunk_ms: 250,
+            debug_audio: false,
+            debug_vad: false,
+            dump_audio: false,
+        };
+
+        let model_pool = ModelPool::preload(&config, &deps)?;
+
+        assert!(model_pool.transcriber_for("en").is_some());
+        assert!(model_pool.transcriber_for("fr").is_some());
+        assert!(model_pool.transcriber_for("sv").is_some());
+        assert_eq!(transcriber_factory.load_count(), 3);
+        Ok(())
+    }
+
+    #[test]
+    fn model_pool_switches_active_language_for_transcription() -> Result<(), AppError> {
+        let (sender, receiver) = control_channel();
+        let control_sender = sender.clone();
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let mut output = TestOutput::default();
+        let transcriber_factory = TestTranscriberFactory::new(vec!["bonjour".to_string()]);
+        let deps = DaemonDeps {
+            audio: Box::new(TestAudioBackend::new(
+                vec!["Mic".to_string()],
+                vec![vec![0.2; 160]],
+            )),
+            transcriber_factory: Box::new(transcriber_factory.clone()),
+        };
+        let config = DaemonConfig {
+            model_path: None,
+            download_model: false,
+            language: "en".to_string(),
+            model_pool_languages: vec!["en".to_string(), "fr".to_string()],
+            device: None,
+            audio_host: AudioHost::Default,
+            sample_rate: 16_000,
+            format: OutputFormat::Plain,
+            mode: OutputMode::Stdout,
+            vad: VadMode::Off,
+            vad_silence_ms: 800,
+            vad_threshold: 0.015,
+            vad_chunk_ms: 250,
+            debug_audio: false,
+            debug_vad: false,
+            dump_audio: false,
+        };
+
+        let shutdown_trigger = Arc::clone(&shutdown);
+        let control_thread = thread::spawn(move || {
+            let _ = control_sender.send(control_message(ControlEvent::SetLanguage {
+                language: "fr".to_string(),
+            }));
+            let _ = control_sender.send(control_message(ControlEvent::Toggle { language: None }));
+            let _ = control_sender.send(control_message(ControlEvent::Toggle { language: None }));
+            thread::sleep(Duration::from_millis(50));
+            shutdown_trigger.store(true, Ordering::Relaxed);
+        });
+
+        let result = run_daemon_loop(&config, &deps, &mut output, receiver, &shutdown, None);
+        control_thread.join().expect("control thread failed");
+        result?;
+
+        assert_eq!(transcriber_factory.load_count(), 2);
+        assert_eq!(
+            transcriber_factory.transcribed_languages(),
+            vec![Some("fr".to_string())]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn model_pool_loads_new_language_on_set_language() -> Result<(), AppError> {
+        let (sender, receiver) = control_channel();
+        let control_sender = sender.clone();
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let mut output = TestOutput::default();
+        let transcriber_factory = TestTranscriberFactory::new(vec!["hej".to_string()]);
+        let deps = DaemonDeps {
+            audio: Box::new(TestAudioBackend::new(
+                vec!["Mic".to_string()],
+                vec![vec![0.2; 160]],
+            )),
+            transcriber_factory: Box::new(transcriber_factory.clone()),
+        };
+        let config = DaemonConfig {
+            model_path: None,
+            download_model: false,
+            language: "en".to_string(),
+            model_pool_languages: vec!["en".to_string()],
+            device: None,
+            audio_host: AudioHost::Default,
+            sample_rate: 16_000,
+            format: OutputFormat::Plain,
+            mode: OutputMode::Stdout,
+            vad: VadMode::Off,
+            vad_silence_ms: 800,
+            vad_threshold: 0.015,
+            vad_chunk_ms: 250,
+            debug_audio: false,
+            debug_vad: false,
+            dump_audio: false,
+        };
+
+        let shutdown_trigger = Arc::clone(&shutdown);
+        let control_thread = thread::spawn(move || {
+            let _ = control_sender.send(control_message(ControlEvent::SetLanguage {
+                language: "sv".to_string(),
+            }));
+            let _ = control_sender.send(control_message(ControlEvent::Toggle { language: None }));
+            let _ = control_sender.send(control_message(ControlEvent::Toggle { language: None }));
+            thread::sleep(Duration::from_millis(50));
+            shutdown_trigger.store(true, Ordering::Relaxed);
+        });
+
+        let result = run_daemon_loop(&config, &deps, &mut output, receiver, &shutdown, None);
+        control_thread.join().expect("control thread failed");
+        result?;
+
+        assert_eq!(transcriber_factory.load_count(), 2);
+        assert_eq!(
+            transcriber_factory.transcribed_languages(),
+            vec![Some("sv".to_string())]
+        );
         Ok(())
     }
 

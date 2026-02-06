@@ -7,7 +7,7 @@ use std::fs;
 use std::io::{BufRead, BufReader};
 use std::io::{Read, Write};
 use std::net::TcpListener;
-use std::os::unix::net::{UnixListener, UnixStream};
+use std::os::unix::net::UnixListener;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
@@ -23,6 +23,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(feature = "test-support")]
 use serde_json::Value;
+
+#[cfg(feature = "test-support")]
+use std::os::unix::net::UnixStream;
 
 #[cfg(feature = "test-support")]
 use sv::daemon::test_support::{
@@ -845,8 +848,8 @@ fn at13_events_socket_fans_out_to_multiple_clients() -> Result<(), Box<dyn Error
         .join()
         .map_err(|_| "client thread panicked")??;
 
-    let first_events = read_daemon_events(&mut first_subscriber, 4)?;
-    let second_events = read_daemon_events(&mut second_subscriber, 4)?;
+    let first_events = read_daemon_events(&mut first_subscriber, 6)?;
+    let second_events = read_daemon_events(&mut second_subscriber, 6)?;
     assert_eq!(
         first_events, second_events,
         "subscribers should see identical events"
@@ -858,16 +861,117 @@ fn at13_events_socket_fans_out_to_multiple_clients() -> Result<(), Box<dyn Error
     ));
     assert!(matches!(
         first_events[1].event,
-        sv::ipc::DaemonEventType::RecordingStarted { .. }
+        sv::ipc::DaemonEventType::ModelLoaded { .. }
     ));
     assert!(matches!(
         first_events[2].event,
-        sv::ipc::DaemonEventType::TranscriptFinal { .. }
+        sv::ipc::DaemonEventType::ModelLoaded { .. }
     ));
     assert!(matches!(
         first_events[3].event,
+        sv::ipc::DaemonEventType::RecordingStarted { .. }
+    ));
+    assert!(matches!(
+        first_events[4].event,
+        sv::ipc::DaemonEventType::TranscriptFinal { .. }
+    ));
+    assert!(matches!(
+        first_events[5].event,
         sv::ipc::DaemonEventType::RecordingStopped { .. }
     ));
+
+    Ok(())
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn at14_set_language_switches_active_language_and_transcript_language() -> Result<(), Box<dyn Error>>
+{
+    let runtime_dir = temp_dir("soundvibes-acceptance-runtime");
+    fs::create_dir_all(&runtime_dir)?;
+    let _runtime_guard = EnvGuard::set("XDG_RUNTIME_DIR", &runtime_dir);
+
+    let control_socket_path = sv::daemon::daemon_socket_path()?;
+    let (_control_guard, receiver) = sv::daemon::start_socket_listener(&control_socket_path)?;
+    let events_socket_path = sv::daemon::daemon_events_socket_path()?;
+    let (_events_guard, event_sender) =
+        sv::daemon::start_events_socket_listener(&events_socket_path)?;
+
+    let mut subscriber = UnixStream::connect(&events_socket_path)?;
+    subscriber.set_read_timeout(Some(Duration::from_secs(2)))?;
+    thread::sleep(Duration::from_millis(40));
+
+    let deps = DaemonDeps {
+        audio: Box::new(TestAudioBackend::new(
+            vec!["Mic".to_string()],
+            vec![vec![0.2; 160]],
+        )),
+        transcriber_factory: Box::new(TestTranscriberFactory::new(vec!["hej".to_string()])),
+    };
+    let config = DaemonConfig {
+        model_path: None,
+        download_model: false,
+        language: "en".to_string(),
+        model_pool_languages: vec!["en".to_string(), "sv".to_string()],
+        device: None,
+        audio_host: AudioHost::Default,
+        sample_rate: 16_000,
+        format: OutputFormat::Plain,
+        mode: OutputMode::Stdout,
+        vad: VadMode::Off,
+        vad_silence_ms: 800,
+        vad_threshold: 0.015,
+        vad_chunk_ms: 250,
+        debug_audio: false,
+        debug_vad: false,
+        dump_audio: false,
+    };
+
+    let client_thread = thread::spawn(move || -> Result<(), sv::error::AppError> {
+        let set_language = sv::daemon::send_set_language_command("sv")?;
+        assert!(set_language.ok);
+        assert_eq!(set_language.language.as_deref(), Some("sv"));
+        assert_eq!(set_language.state.as_deref(), Some("idle"));
+
+        let status = sv::daemon::send_status_command()?;
+        assert!(status.ok);
+        assert_eq!(status.language.as_deref(), Some("sv"));
+        assert_eq!(status.state.as_deref(), Some("idle"));
+
+        let _ = sv::daemon::send_toggle_command(None)?;
+        let _ = sv::daemon::send_toggle_command(None)?;
+        let _ = sv::daemon::send_stop_command()?;
+        Ok(())
+    });
+
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let mut output = TestOutput::default();
+    sv::daemon::run_daemon_loop(
+        &config,
+        &deps,
+        &mut output,
+        receiver,
+        shutdown.as_ref(),
+        Some(&event_sender),
+    )?;
+
+    client_thread
+        .join()
+        .map_err(|_| "client thread panicked")??;
+
+    let events = read_daemon_events(&mut subscriber, 6)?;
+    assert!(events.iter().any(|event| {
+        matches!(
+            event.event,
+            sv::ipc::DaemonEventType::ModelLoaded { ref language, .. } if language == "sv"
+        )
+    }));
+    assert!(events.iter().any(|event| {
+        matches!(
+            event.event,
+            sv::ipc::DaemonEventType::TranscriptFinal { ref language, .. } if language == "sv"
+        )
+    }));
 
     Ok(())
 }
