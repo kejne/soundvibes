@@ -94,7 +94,7 @@ These tests validate the product behavior for the offline Linux CLI.
 - Pass: the acceptance test exits 0.
 
 ### AT-11: Systemd service starts in graphical session
-- Setup: use the tracked systemd unit template and installer output.
-- Command: `cargo test --test acceptance -- at11_systemd_service_targets_graphical_session`.
-- Expect: service unit uses `After=graphical-session.target` and `WantedBy=graphical-session.target`.
-- Pass: both the template and installer fallback unit content are aligned with graphical session startup.
+- Setup: create a temp HOME with an existing `config.toml`, and run installer with mocked `curl`, `tar`, and `systemctl` to avoid network/system modifications.
+- Command: `cargo test --test acceptance -- at11_installer_is_idempotent_and_preserves_config`.
+- Expect: running installer twice succeeds, generated service unit uses `After=graphical-session.target` and `WantedBy=graphical-session.target`, and existing config content is unchanged.
+- Pass: test exits 0 with preserved config and graphical-session-targeted unit.

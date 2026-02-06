@@ -15,6 +15,8 @@ use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use std::os::unix::fs::PermissionsExt;
+
 #[cfg(feature = "test-support")]
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -467,26 +469,114 @@ fn at10_marketing_site_builds_and_smoke_test() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-fn at11_systemd_service_targets_graphical_session() {
-    let service_template = include_str!("../contrib/sv.service");
-    assert!(
-        service_template.contains("After=graphical-session.target"),
-        "service template must start after graphical session"
-    );
-    assert!(
-        service_template.contains("WantedBy=graphical-session.target"),
-        "service template must be wanted by graphical session"
+fn at11_installer_is_idempotent_and_preserves_config() -> Result<(), Box<dyn Error>> {
+    let sandbox = temp_dir("soundvibes-install-test");
+    let home = sandbox.join("home");
+    let xdg_config_home = sandbox.join("xdg-config");
+    let bin_dir = home.join(".local").join("bin");
+    let mock_bin = sandbox.join("mock-bin");
+    fs::create_dir_all(&bin_dir)?;
+    fs::create_dir_all(&mock_bin)?;
+
+    let config_dir = xdg_config_home.join("soundvibes");
+    fs::create_dir_all(&config_dir)?;
+    let config_path = config_dir.join("config.toml");
+    let original_config = "# keep-me\nformat = \"jsonl\"\n";
+    fs::write(&config_path, original_config)?;
+
+    write_executable(
+        &mock_bin.join("curl"),
+        r#"#!/bin/sh
+last=""
+for arg in "$@"; do
+  last="$arg"
+done
+
+if [ "$last" = "https://api.github.com/repos/kejne/soundvibes/releases/latest" ]; then
+  printf '%s' '{"browser_download_url": "https://example.com/sv-linux-x86_64.tar.gz"}'
+  exit 0
+fi
+
+out=""
+while [ $# -gt 0 ]; do
+  if [ "$1" = "-o" ]; then
+    out="$2"
+    shift 2
+  else
+    shift
+  fi
+done
+
+if [ -n "$out" ]; then
+  : > "$out"
+fi
+"#,
+    )?;
+
+    write_executable(
+        &mock_bin.join("tar"),
+        r#"#!/bin/sh
+dest="."
+while [ $# -gt 0 ]; do
+  if [ "$1" = "-C" ]; then
+    dest="$2"
+    shift 2
+  else
+    shift
+  fi
+done
+
+cat > "$dest/sv-linux-x86_64" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+chmod +x "$dest/sv-linux-x86_64"
+"#,
+    )?;
+
+    write_executable(&mock_bin.join("systemctl"), "#!/bin/sh\nexit 0\n")?;
+
+    let install_script = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("install.sh");
+    let path = format!(
+        "{}:{}:{}",
+        mock_bin.display(),
+        bin_dir.display(),
+        env::var("PATH")?
     );
 
-    let install_script = include_str!("../install.sh");
+    for _ in 0..2 {
+        let status = Command::new("sh")
+            .arg(&install_script)
+            .args([
+                "--yes",
+                "--no-deps",
+                &format!("--bin-dir={}", bin_dir.display()),
+            ])
+            .env("HOME", &home)
+            .env("XDG_CONFIG_HOME", &xdg_config_home)
+            .env("PATH", &path)
+            .status()?;
+        assert!(status.success(), "install script failed with {status}");
+    }
+
+    let updated_config = fs::read_to_string(&config_path)?;
+    assert_eq!(
+        updated_config, original_config,
+        "installer should keep existing configuration"
+    );
+
+    let service_path = home.join(".config/systemd/user/sv.service");
+    let service_contents = fs::read_to_string(&service_path)?;
     assert!(
-        install_script.contains("After=graphical-session.target"),
-        "installer fallback unit must start after graphical session"
+        service_contents.contains("After=graphical-session.target"),
+        "service should start after graphical session"
     );
     assert!(
-        install_script.contains("WantedBy=graphical-session.target"),
-        "installer fallback unit must be wanted by graphical session"
+        service_contents.contains("WantedBy=graphical-session.target"),
+        "service should be tied to graphical session"
     );
+
+    Ok(())
 }
 
 fn command_available(command: &str) -> bool {
@@ -497,6 +587,14 @@ fn command_available(command: &str) -> bool {
         .status()
         .map(|status| status.success())
         .unwrap_or(false)
+}
+
+fn write_executable(path: &std::path::Path, content: &str) -> Result<(), Box<dyn Error>> {
+    fs::write(path, content)?;
+    let mut perms = fs::metadata(path)?.permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(path, perms)?;
+    Ok(())
 }
 
 fn model_path() -> Result<PathBuf, Box<dyn Error>> {
