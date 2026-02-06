@@ -116,8 +116,20 @@ These tests validate the product behavior for the offline Linux CLI.
 - Expect: client sends `toggle lang=sv` to the control socket.
 - Pass: control socket receives exactly `toggle lang=sv`.
 
-### AT-12: Control socket toggle + status JSON responses
+### AT-12a: Control socket toggle + status JSON responses
 - Setup: daemon running with test-support mocks.
 - Command: send `toggle lang=fr`, then `status` over the control socket.
 - Expect: both responses are valid JSON with `ok`, `state`, and `language`.
 - Pass: toggle response reports `recording` in `fr`, and status reports the same state/language.
+
+### AT-13: Events socket fan-out to multiple subscribers
+- Setup: daemon running with test-support mocks and two subscribers connected to `sv-events.sock`.
+- Command: send `toggle lang=fr`, then toggle off, then stop.
+- Expect: both subscribers receive the same ordered event stream including `daemon_ready`, `model_loaded`, `recording_started`, `transcript_final`, and `recording_stopped`.
+- Pass: both subscriber streams are identical and contain the expected event types.
+
+### AT-14: Set-language switches active model context
+- Setup: daemon running with test-support mocks, language pool includes `en` and `sv`, and one events subscriber connected.
+- Command: send `set-language lang=sv`, then `status`, then toggle on/off.
+- Expect: control responses report active language `sv`, `model_loaded` is emitted for `sv`, and `transcript_final` includes `language="sv"`.
+- Pass: command responses and event payloads consistently reference `sv`.

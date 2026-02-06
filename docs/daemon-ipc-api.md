@@ -1,7 +1,7 @@
-# Daemon IPC API (Draft)
+# Daemon IPC API
 
 ## Purpose
-Define the daemon IPC API, split into control commands and notification events. This covers external notification plugins (any language), a socket design that supports 0-n subscribers, and multi-language triggering so plugins can react to language-specific actions.
+Define the daemon IPC API split into control commands and notification events. This covers external notification plugins (any language), a socket design that supports 0-n subscribers, and language-aware model activation.
 
 ## Goals
 - Keep the core design simple and aligned with the existing Unix socket philosophy.
@@ -80,7 +80,7 @@ status
 
 Response:
 ```json
-{"api_version":"1","ok":true,"state":"idle","language":"en","active_models":["en","fr"],"recording":false}
+{"api_version":"1","ok":true,"state":"idle","language":"en"}
 ```
 
 ### Command: set-language
@@ -93,7 +93,7 @@ set-language lang=sv
 
 Response:
 ```json
-{"api_version":"1","ok":true,"language":"sv"}
+{"api_version":"1","ok":true,"state":"idle","language":"sv"}
 ```
 
 ### Command: stop
@@ -106,7 +106,25 @@ stop
 
 Response:
 ```json
-{"api_version":"1","ok":true}
+{"api_version":"1","ok":true,"state":"idle","language":"en"}
+```
+
+### Command: set-model
+Reload model for the currently active language.
+
+Request:
+```
+set-model size=small model-language=en
+```
+
+Successful response:
+```json
+{"api_version":"1","ok":true,"state":"idle","language":"en"}
+```
+
+Error response:
+```json
+{"api_version":"1","ok":false,"error":"model_reload_failed","message":"..."}
 ```
 
 ## Events
@@ -143,8 +161,13 @@ Emitted when transcription completes.
 Emitted when a model context is loaded or activated.
 
 ```json
-{"api_version":"1","type":"model_loaded","timestamp":"2026-02-05T12:01:05Z","language":"fr","model_size":"small","model_language":"fr"}
+{"api_version":"1","type":"model_loaded","timestamp":"2026-02-05T12:01:05Z","language":"fr","model_size":"small","model_language":"en"}
 ```
+
+Notes:
+- Startup emits `model_loaded` for the default active language.
+- `set-language` and `toggle lang=...` emit `model_loaded` for the activated language.
+- When a language is preloaded from config without an explicit `set-model`, `model_size` is `configured`.
 
 ### Event: error
 Emitted when the daemon encounters a recoverable error.
@@ -160,7 +183,7 @@ Emitted when the daemon encounters a recoverable error.
 - Special value `auto` is allowed for automatic detection.
 
 ### Multi-language behavior
-Model pool strategy: the daemon preloads and keeps multiple language models resident. `toggle lang=...` selects which model is used for the current recording. The API always includes a `language` field in events and responses.
+Model pool strategy: the daemon preloads and keeps language-keyed model contexts resident. `set-language lang=...` or `toggle lang=...` activates the language context used for transcription. The API always includes a `language` field in control responses and language-aware events.
 
 ## Fan-out Behavior
 - The daemon maintains a list of event subscribers.
@@ -220,7 +243,7 @@ Given the daemon is running
 And recording is off
 When the user sends `set-language lang=sv`
 Then the daemon updates active language to `sv`
-And emits a `model_loaded` or `language_changed` event
+And emits a `model_loaded` event
 
 ### Use Case: Plugin reacts to recording events
 Given a plugin is connected
@@ -233,7 +256,3 @@ Then the plugin performs a stop action
 - Control responses always include `ok` boolean; error responses include `error` and `message`.
 - Plugins must ignore unknown event types for forward compatibility.
 - The daemon should continue operation even if plugins misbehave or disconnect.
-
-## Open Questions
-- Should `set-language` return `model_loaded` vs `language_changed` event name?
-- Should the daemon ever introduce event filtering per subscriber?
