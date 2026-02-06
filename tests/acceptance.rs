@@ -7,7 +7,7 @@ use std::fs;
 use std::io::{BufRead, BufReader};
 use std::io::{Read, Write};
 use std::net::TcpListener;
-use std::os::unix::net::UnixListener;
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
@@ -240,7 +240,14 @@ fn at04_daemon_toggle_captures_and_transcribes() -> Result<(), Box<dyn Error>> {
         shutdown_trigger.store(true, Ordering::Relaxed);
     });
 
-    sv::daemon::run_daemon_loop(&config, &deps, &mut output, receiver, shutdown.as_ref())?;
+    sv::daemon::run_daemon_loop(
+        &config,
+        &deps,
+        &mut output,
+        receiver,
+        shutdown.as_ref(),
+        None,
+    )?;
     control_thread.join().expect("control thread failed");
 
     assert!(output
@@ -295,7 +302,14 @@ fn at05_jsonl_output_formatting() -> Result<(), Box<dyn Error>> {
         shutdown_trigger.store(true, Ordering::Relaxed);
     });
 
-    sv::daemon::run_daemon_loop(&config, &deps, &mut output, receiver, shutdown.as_ref())?;
+    sv::daemon::run_daemon_loop(
+        &config,
+        &deps,
+        &mut output,
+        receiver,
+        shutdown.as_ref(),
+        None,
+    )?;
     control_thread.join().expect("control thread failed");
 
     let json_line = output
@@ -749,12 +763,157 @@ fn at12_control_socket_toggle_with_language_and_status_response() -> Result<(), 
 
     let shutdown = Arc::new(AtomicBool::new(false));
     let mut output = TestOutput::default();
-    sv::daemon::run_daemon_loop(&config, &deps, &mut output, receiver, shutdown.as_ref())?;
+    sv::daemon::run_daemon_loop(
+        &config,
+        &deps,
+        &mut output,
+        receiver,
+        shutdown.as_ref(),
+        None,
+    )?;
 
     client_thread
         .join()
         .map_err(|_| "client thread panicked")??;
     Ok(())
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn at13_events_socket_fans_out_to_multiple_clients() -> Result<(), Box<dyn Error>> {
+    let runtime_dir = temp_dir("soundvibes-acceptance-runtime");
+    fs::create_dir_all(&runtime_dir)?;
+    let _runtime_guard = EnvGuard::set("XDG_RUNTIME_DIR", &runtime_dir);
+
+    let control_socket_path = sv::daemon::daemon_socket_path()?;
+    let (_control_guard, receiver) = sv::daemon::start_socket_listener(&control_socket_path)?;
+    let events_socket_path = sv::daemon::daemon_events_socket_path()?;
+    let (_events_guard, event_sender) =
+        sv::daemon::start_events_socket_listener(&events_socket_path)?;
+
+    let mut first_subscriber = UnixStream::connect(&events_socket_path)?;
+    let mut second_subscriber = UnixStream::connect(&events_socket_path)?;
+    first_subscriber.set_read_timeout(Some(Duration::from_secs(2)))?;
+    second_subscriber.set_read_timeout(Some(Duration::from_secs(2)))?;
+    thread::sleep(Duration::from_millis(40));
+
+    let deps = DaemonDeps {
+        audio: Box::new(TestAudioBackend::new(
+            vec!["Mic".to_string()],
+            vec![vec![0.2; 160]],
+        )),
+        transcriber_factory: Box::new(TestTranscriberFactory::new(vec!["hello".to_string()])),
+    };
+    let config = DaemonConfig {
+        model_path: None,
+        download_model: false,
+        language: "en".to_string(),
+        model_pool_languages: vec!["en".to_string(), "fr".to_string()],
+        device: None,
+        audio_host: AudioHost::Default,
+        sample_rate: 16_000,
+        format: OutputFormat::Plain,
+        mode: OutputMode::Stdout,
+        vad: VadMode::Off,
+        vad_silence_ms: 800,
+        vad_threshold: 0.015,
+        vad_chunk_ms: 250,
+        debug_audio: false,
+        debug_vad: false,
+        dump_audio: false,
+    };
+
+    let client_thread = thread::spawn(move || -> Result<(), sv::error::AppError> {
+        let _ = sv::daemon::send_toggle_command(Some("fr"))?;
+        let _ = sv::daemon::send_toggle_command(None)?;
+        let _ = sv::daemon::send_stop_command()?;
+        Ok(())
+    });
+
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let mut output = TestOutput::default();
+    sv::daemon::run_daemon_loop(
+        &config,
+        &deps,
+        &mut output,
+        receiver,
+        shutdown.as_ref(),
+        Some(&event_sender),
+    )?;
+
+    client_thread
+        .join()
+        .map_err(|_| "client thread panicked")??;
+
+    let first_events = read_daemon_events(&mut first_subscriber, 4)?;
+    let second_events = read_daemon_events(&mut second_subscriber, 4)?;
+    assert_eq!(
+        first_events, second_events,
+        "subscribers should see identical events"
+    );
+
+    assert!(matches!(
+        first_events[0].event,
+        sv::ipc::DaemonEventType::DaemonReady
+    ));
+    assert!(matches!(
+        first_events[1].event,
+        sv::ipc::DaemonEventType::RecordingStarted { .. }
+    ));
+    assert!(matches!(
+        first_events[2].event,
+        sv::ipc::DaemonEventType::TranscriptFinal { .. }
+    ));
+    assert!(matches!(
+        first_events[3].event,
+        sv::ipc::DaemonEventType::RecordingStopped { .. }
+    ));
+
+    Ok(())
+}
+
+#[cfg(feature = "test-support")]
+fn read_daemon_events(
+    stream: &mut UnixStream,
+    count: usize,
+) -> Result<Vec<sv::ipc::DaemonEvent>, Box<dyn Error>> {
+    let mut events = Vec::with_capacity(count);
+    for _ in 0..count {
+        let line = read_event_line(stream)?;
+        let event = sv::ipc::from_json_line(&line)?;
+        events.push(event);
+    }
+    Ok(events)
+}
+
+#[cfg(feature = "test-support")]
+fn read_event_line(stream: &mut UnixStream) -> Result<String, Box<dyn Error>> {
+    let mut line = Vec::new();
+    let mut byte = [0u8; 1];
+    loop {
+        match stream.read(&mut byte) {
+            Ok(0) => break,
+            Ok(_) => {
+                line.push(byte[0]);
+                if byte[0] == b'\n' {
+                    break;
+                }
+            }
+            Err(err)
+                if err.kind() == std::io::ErrorKind::WouldBlock
+                    || err.kind() == std::io::ErrorKind::TimedOut =>
+            {
+                return Err("timed out while reading daemon event".into());
+            }
+            Err(err) => return Err(Box::new(err)),
+        }
+    }
+
+    if line.is_empty() {
+        return Err("daemon events stream closed before receiving expected event".into());
+    }
+
+    String::from_utf8(line).map_err(|err| err.into())
 }
 
 fn command_available(command: &str) -> bool {

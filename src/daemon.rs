@@ -146,8 +146,15 @@ pub fn run_daemon(
     output: &mut dyn DaemonOutput,
 ) -> Result<(), AppError> {
     let socket_path = daemon_socket_path()?;
-    let (_guard, control_events) = start_socket_listener(&socket_path)?;
+    let (_control_guard, control_events) = start_socket_listener(&socket_path)?;
     output.stdout(&format!("Daemon listening on {}", socket_path.display()));
+
+    let events_socket_path = daemon_events_socket_path()?;
+    let (_events_guard, event_sender) = start_events_socket_listener(&events_socket_path)?;
+    output.stdout(&format!(
+        "Daemon events on {}",
+        events_socket_path.display()
+    ));
 
     let shutdown = Arc::new(AtomicBool::new(false));
     for signal in [SIGINT, SIGTERM] {
@@ -156,7 +163,14 @@ pub fn run_daemon(
         })?;
     }
 
-    run_daemon_loop(config, deps, output, control_events, &shutdown)
+    run_daemon_loop(
+        config,
+        deps,
+        output,
+        control_events,
+        &shutdown,
+        Some(&event_sender),
+    )
 }
 
 pub fn run_daemon_loop(
@@ -165,6 +179,7 @@ pub fn run_daemon_loop(
     output: &mut dyn DaemonOutput,
     control_events: Receiver<ControlMessage>,
     shutdown: &AtomicBool,
+    event_sender: Option<&mpsc::Sender<ipc::DaemonEvent>>,
 ) -> Result<(), AppError> {
     let host = select_audio_host(config.audio_host)?;
     audio::configure_alsa_logging(config.debug_audio);
@@ -200,6 +215,8 @@ pub fn run_daemon_loop(
     let mut utterance_index = 0u64;
     let mut capture: Option<Box<dyn CaptureSource>> = None;
 
+    emit_daemon_event(event_sender, ipc::DaemonEventType::DaemonReady);
+
     loop {
         if shutdown.load(Ordering::Relaxed) {
             if recording {
@@ -212,7 +229,14 @@ pub fn run_daemon_loop(
                     &mut buffer,
                     &mut utterance_index,
                     output,
+                    event_sender,
                 )?;
+                emit_daemon_event(
+                    event_sender,
+                    ipc::DaemonEventType::RecordingStopped {
+                        language: active_language.clone(),
+                    },
+                );
             }
             output.stdout("Daemon shutting down.");
             break;
@@ -236,7 +260,14 @@ pub fn run_daemon_loop(
                                 &mut buffer,
                                 &mut utterance_index,
                                 output,
+                                event_sender,
                             )?;
+                            emit_daemon_event(
+                                event_sender,
+                                ipc::DaemonEventType::RecordingStopped {
+                                    language: active_language.clone(),
+                                },
+                            );
                             control_ok_response("idle", active_language.as_str())
                         } else {
                             let new_capture = deps
@@ -254,6 +285,12 @@ pub fn run_daemon_loop(
                             buffer.clear();
                             capture = Some(new_capture);
                             output.stdout("Toggle on. Recording...");
+                            emit_daemon_event(
+                                event_sender,
+                                ipc::DaemonEventType::RecordingStarted {
+                                    language: active_language.clone(),
+                                },
+                            );
                             control_ok_response("recording", active_language.as_str())
                         }
                     }
@@ -282,6 +319,12 @@ pub fn run_daemon_loop(
                             buffer.clear();
                             capture = None;
                             output.stdout("Recording stopped for model reload.");
+                            emit_daemon_event(
+                                event_sender,
+                                ipc::DaemonEventType::RecordingStopped {
+                                    language: active_language.clone(),
+                                },
+                            );
                         }
                         let spec = ModelSpec::new(size, model_language);
                         match model::prepare_model(None, &spec, config.download_model) {
@@ -298,10 +341,27 @@ pub fn run_daemon_loop(
                                             model_size_token(size),
                                             model_language_token(model_language)
                                         ));
+                                        emit_daemon_event(
+                                            event_sender,
+                                            ipc::DaemonEventType::ModelLoaded {
+                                                language: active_language.clone(),
+                                                model_size: model_size_token(size).to_string(),
+                                                model_language: model_language_token(
+                                                    model_language,
+                                                )
+                                                .to_string(),
+                                            },
+                                        );
                                         control_ok_response("idle", active_language.as_str())
                                     }
                                     Err(err) => {
                                         output.stderr(&format!("Model reload failed: {err}"));
+                                        emit_daemon_event(
+                                            event_sender,
+                                            ipc::DaemonEventType::Error {
+                                                message: err.to_string(),
+                                            },
+                                        );
                                         control_error_response(
                                             "model_reload_failed",
                                             err.to_string(),
@@ -311,11 +371,23 @@ pub fn run_daemon_loop(
                             }
                             Err(err) => {
                                 output.stderr(&format!("Model reload failed: {err}"));
+                                emit_daemon_event(
+                                    event_sender,
+                                    ipc::DaemonEventType::Error {
+                                        message: err.to_string(),
+                                    },
+                                );
                                 control_error_response("model_reload_failed", err.to_string())
                             }
                         }
                     }
                     ControlEvent::Error(error_message) => {
+                        emit_daemon_event(
+                            event_sender,
+                            ipc::DaemonEventType::Error {
+                                message: error_message.clone(),
+                            },
+                        );
                         if let Some(sender) = message.response {
                             let _ = sender.send(control_error_response(
                                 "listener_error",
@@ -354,6 +426,7 @@ fn stop_recording(
     buffer: &mut Vec<f32>,
     utterance_index: &mut u64,
     output: &mut dyn DaemonOutput,
+    event_sender: Option<&mpsc::Sender<ipc::DaemonEvent>>,
 ) -> Result<(), AppError> {
     let mut active = capture
         .take()
@@ -367,6 +440,7 @@ fn stop_recording(
         buffer,
         utterance_index,
         output,
+        event_sender,
     )?;
     Ok(())
 }
@@ -379,6 +453,7 @@ fn finalize_recording(
     buffer: &[f32],
     utterance_index: &mut u64,
     output: &mut dyn DaemonOutput,
+    event_sender: Option<&mpsc::Sender<ipc::DaemonEvent>>,
 ) -> Result<(), AppError> {
     let trimmed = audio::trim_trailing_silence(buffer, config.sample_rate, vad);
     if trimmed.is_empty() {
@@ -391,7 +466,15 @@ fn finalize_recording(
     }
     let transcript = transcriber
         .transcribe(&trimmed, Some(language))
-        .map_err(|err| AppError::runtime(err.to_string()))?;
+        .map_err(|err| {
+            emit_daemon_event(
+                event_sender,
+                ipc::DaemonEventType::Error {
+                    message: err.to_string(),
+                },
+            );
+            AppError::runtime(err.to_string())
+        })?;
     emit_transcript(
         config,
         output,
@@ -402,8 +485,25 @@ fn finalize_recording(
         },
     )
     .map_err(AppError::runtime)?;
+    emit_daemon_event(
+        event_sender,
+        ipc::DaemonEventType::TranscriptFinal {
+            language: language.to_string(),
+            utterance: *utterance_index,
+            duration_ms,
+            text: transcript,
+        },
+    );
     output.stdout("Ready for next utterance.");
     Ok(())
+}
+
+fn emit_daemon_event(sender: Option<&mpsc::Sender<ipc::DaemonEvent>>, event: ipc::DaemonEventType) {
+    let Some(sender) = sender else {
+        return;
+    };
+    let event = ipc::DaemonEvent::new(Utc::now().to_rfc3339(), event);
+    let _ = sender.send(event);
 }
 
 fn emit_transcript(
@@ -509,9 +609,77 @@ pub fn daemon_socket_path() -> Result<PathBuf, AppError> {
         .join("sv.sock"))
 }
 
-pub fn start_socket_listener(
+pub fn daemon_events_socket_path() -> Result<PathBuf, AppError> {
+    let runtime_dir = env::var_os("XDG_RUNTIME_DIR").ok_or_else(|| {
+        AppError::runtime(
+            "XDG_RUNTIME_DIR is not set; set it to a writable runtime dir (e.g. /run/user/$(id -u))",
+        )
+    })?;
+    Ok(PathBuf::from(runtime_dir)
+        .join("soundvibes")
+        .join("sv-events.sock"))
+}
+
+pub fn start_events_socket_listener(
     socket_path: &Path,
-) -> Result<(SocketGuard, Receiver<ControlMessage>), AppError> {
+) -> Result<(SocketGuard, mpsc::Sender<ipc::DaemonEvent>), AppError> {
+    prepare_socket_path(socket_path, "daemon events socket", None)?;
+
+    let listener = UnixListener::bind(socket_path).map_err(|err| {
+        AppError::runtime(format!(
+            "failed to bind daemon events socket {}: {err}",
+            socket_path.display()
+        ))
+    })?;
+    listener.set_nonblocking(true).map_err(|err| {
+        AppError::runtime(format!(
+            "failed to set daemon events socket to nonblocking mode {}: {err}",
+            socket_path.display()
+        ))
+    })?;
+    let guard = SocketGuard {
+        path: socket_path.to_path_buf(),
+    };
+    let (event_sender, event_receiver) = mpsc::channel();
+
+    thread::spawn(move || {
+        let mut subscribers: Vec<UnixStream> = Vec::new();
+        loop {
+            accept_event_subscribers(&listener, &mut subscribers);
+            match event_receiver.recv_timeout(Duration::from_millis(20)) {
+                Ok(event) => {
+                    let Ok(line) = ipc::to_json_line(&event) else {
+                        continue;
+                    };
+                    subscribers.retain_mut(|stream| stream.write_all(line.as_bytes()).is_ok());
+                }
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => break,
+            }
+        }
+    });
+
+    Ok((guard, event_sender))
+}
+
+fn accept_event_subscribers(listener: &UnixListener, subscribers: &mut Vec<UnixStream>) {
+    loop {
+        match listener.accept() {
+            Ok((stream, _addr)) => {
+                let _ = stream.set_write_timeout(Some(Duration::from_millis(50)));
+                subscribers.push(stream);
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => break,
+            Err(_) => break,
+        }
+    }
+}
+
+fn prepare_socket_path(
+    socket_path: &Path,
+    socket_name: &str,
+    active_error: Option<&str>,
+) -> Result<(), AppError> {
     if let Some(parent) = socket_path.parent() {
         fs::create_dir_all(parent).map_err(|err| {
             AppError::runtime(format!(
@@ -523,17 +691,33 @@ pub fn start_socket_listener(
 
     if socket_path.exists() {
         if UnixStream::connect(socket_path).is_ok() {
-            return Err(AppError::runtime(
-                "daemon already running; use `sv` to toggle capture",
-            ));
+            if let Some(active_error) = active_error {
+                return Err(AppError::runtime(active_error));
+            }
+            return Err(AppError::runtime(format!(
+                "{socket_name} already active at {}",
+                socket_path.display()
+            )));
         }
         fs::remove_file(socket_path).map_err(|err| {
             AppError::runtime(format!(
-                "failed to remove stale daemon socket {}: {err}",
+                "failed to remove stale socket {}: {err}",
                 socket_path.display()
             ))
         })?;
     }
+
+    Ok(())
+}
+
+pub fn start_socket_listener(
+    socket_path: &Path,
+) -> Result<(SocketGuard, Receiver<ControlMessage>), AppError> {
+    prepare_socket_path(
+        socket_path,
+        "daemon control socket",
+        Some("daemon already running; use `sv` to toggle capture"),
+    )?;
 
     let listener = UnixListener::bind(socket_path).map_err(|err| {
         AppError::runtime(format!(
@@ -1080,6 +1264,40 @@ mod tests {
         dir
     }
 
+    fn read_event_line(stream: &mut UnixStream) -> Result<String, AppError> {
+        let mut line = Vec::new();
+        let mut byte = [0u8; 1];
+        loop {
+            match stream.read(&mut byte) {
+                Ok(0) => break,
+                Ok(_) => {
+                    line.push(byte[0]);
+                    if byte[0] == b'\n' {
+                        break;
+                    }
+                }
+                Err(err)
+                    if err.kind() == std::io::ErrorKind::WouldBlock
+                        || err.kind() == std::io::ErrorKind::TimedOut =>
+                {
+                    return Err(AppError::runtime("timed out waiting for daemon event"));
+                }
+                Err(err) => {
+                    return Err(AppError::runtime(format!(
+                        "failed to read daemon event: {err}"
+                    )));
+                }
+            }
+        }
+
+        if line.is_empty() {
+            return Err(AppError::runtime("daemon event stream closed"));
+        }
+
+        String::from_utf8(line)
+            .map_err(|err| AppError::runtime(format!("invalid utf-8 daemon event: {err}")))
+    }
+
     #[test]
     fn daemon_loop_emits_transcript_to_output() -> Result<(), AppError> {
         let (sender, receiver) = control_channel();
@@ -1120,7 +1338,7 @@ mod tests {
             shutdown_trigger.store(true, Ordering::Relaxed);
         });
 
-        let result = run_daemon_loop(&config, &deps, &mut output, receiver, &shutdown);
+        let result = run_daemon_loop(&config, &deps, &mut output, receiver, &shutdown, None);
         control_thread.join().expect("control thread failed");
         result?;
 
@@ -1185,7 +1403,14 @@ mod tests {
 
         let shutdown = Arc::new(AtomicBool::new(false));
         let mut output = TestOutput::default();
-        run_daemon_loop(&config, &deps, &mut output, receiver, shutdown.as_ref())?;
+        run_daemon_loop(
+            &config,
+            &deps,
+            &mut output,
+            receiver,
+            shutdown.as_ref(),
+            None,
+        )?;
 
         client_thread
             .join()
@@ -1221,6 +1446,104 @@ mod tests {
 
         assert!(!response.ok);
         assert_eq!(response.error.as_deref(), Some("invalid_request"));
+        Ok(())
+    }
+
+    #[test]
+    fn event_fanout_broadcasts_identical_events_to_multiple_clients() -> Result<(), AppError> {
+        let _lock = lock_tests();
+        let runtime_dir = temp_runtime_dir();
+        fs::create_dir_all(&runtime_dir)
+            .map_err(|err| AppError::runtime(format!("failed to create runtime dir: {err}")))?;
+        let _env_guard = EnvGuard::set("XDG_RUNTIME_DIR", &runtime_dir);
+
+        let socket_path = daemon_events_socket_path()?;
+        let (_socket_guard, event_sender) = start_events_socket_listener(&socket_path)?;
+
+        let mut first = UnixStream::connect(&socket_path)
+            .map_err(|err| AppError::runtime(format!("failed to connect first client: {err}")))?;
+        let mut second = UnixStream::connect(&socket_path)
+            .map_err(|err| AppError::runtime(format!("failed to connect second client: {err}")))?;
+        first
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .map_err(|err| AppError::runtime(format!("failed to set first timeout: {err}")))?;
+        second
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .map_err(|err| AppError::runtime(format!("failed to set second timeout: {err}")))?;
+
+        thread::sleep(Duration::from_millis(40));
+
+        let expected =
+            ipc::DaemonEvent::new("2026-02-06T10:00:00Z", ipc::DaemonEventType::DaemonReady);
+        event_sender
+            .send(expected.clone())
+            .map_err(|err| AppError::runtime(format!("failed to send event: {err}")))?;
+
+        let first_line = read_event_line(&mut first)?;
+        let second_line = read_event_line(&mut second)?;
+
+        let first_event = ipc::from_json_line::<ipc::DaemonEvent>(&first_line)
+            .map_err(|err| AppError::runtime(format!("failed to parse first event: {err}")))?;
+        let second_event = ipc::from_json_line::<ipc::DaemonEvent>(&second_line)
+            .map_err(|err| AppError::runtime(format!("failed to parse second event: {err}")))?;
+
+        assert_eq!(first_event, expected);
+        assert_eq!(second_event, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn event_fanout_drops_disconnected_clients_and_keeps_healthy_clients() -> Result<(), AppError> {
+        let _lock = lock_tests();
+        let runtime_dir = temp_runtime_dir();
+        fs::create_dir_all(&runtime_dir)
+            .map_err(|err| AppError::runtime(format!("failed to create runtime dir: {err}")))?;
+        let _env_guard = EnvGuard::set("XDG_RUNTIME_DIR", &runtime_dir);
+
+        let socket_path = daemon_events_socket_path()?;
+        let (_socket_guard, event_sender) = start_events_socket_listener(&socket_path)?;
+
+        let disconnected = UnixStream::connect(&socket_path).map_err(|err| {
+            AppError::runtime(format!("failed to connect disconnected client: {err}"))
+        })?;
+        let mut healthy = UnixStream::connect(&socket_path)
+            .map_err(|err| AppError::runtime(format!("failed to connect healthy client: {err}")))?;
+        healthy
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .map_err(|err| AppError::runtime(format!("failed to set timeout: {err}")))?;
+
+        drop(disconnected);
+        thread::sleep(Duration::from_millis(40));
+
+        let first_expected = ipc::DaemonEvent::new(
+            "2026-02-06T10:00:01Z",
+            ipc::DaemonEventType::RecordingStarted {
+                language: "fr".to_string(),
+            },
+        );
+        let second_expected = ipc::DaemonEvent::new(
+            "2026-02-06T10:00:02Z",
+            ipc::DaemonEventType::RecordingStopped {
+                language: "fr".to_string(),
+            },
+        );
+        event_sender
+            .send(first_expected.clone())
+            .map_err(|err| AppError::runtime(format!("failed to send first event: {err}")))?;
+        event_sender
+            .send(second_expected.clone())
+            .map_err(|err| AppError::runtime(format!("failed to send second event: {err}")))?;
+
+        let first_line = read_event_line(&mut healthy)?;
+        let second_line = read_event_line(&mut healthy)?;
+
+        let first_event = ipc::from_json_line::<ipc::DaemonEvent>(&first_line)
+            .map_err(|err| AppError::runtime(format!("failed to parse first event: {err}")))?;
+        let second_event = ipc::from_json_line::<ipc::DaemonEvent>(&second_line)
+            .map_err(|err| AppError::runtime(format!("failed to parse second event: {err}")))?;
+
+        assert_eq!(first_event, first_expected);
+        assert_eq!(second_event, second_expected);
         Ok(())
     }
 
