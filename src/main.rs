@@ -98,10 +98,16 @@ enum CliCommand {
     },
 }
 
-#[derive(Subcommand, Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Subcommand, Debug, Clone, PartialEq, Eq)]
 enum DaemonCommand {
     Start,
+    Status,
     Stop,
+    #[command(name = "set-language")]
+    SetLanguage {
+        #[arg(long = "lang", value_name = "CODE")]
+        lang: String,
+    },
     #[command(name = "set-model")]
     SetModel {
         #[arg(long, value_name = "SIZE")]
@@ -111,11 +117,15 @@ enum DaemonCommand {
     },
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum CliMode {
     Toggle,
     RunDaemon,
+    StatusDaemon,
     StopDaemon,
+    SetLanguage {
+        language: String,
+    },
     SetModel {
         size: ModelSize,
         model_language: ModelLanguage,
@@ -129,8 +139,16 @@ fn resolve_cli_mode(cli: &Cli) -> CliMode {
             command: DaemonCommand::Start,
         }) => CliMode::RunDaemon,
         Some(CliCommand::Daemon {
+            command: DaemonCommand::Status,
+        }) => CliMode::StatusDaemon,
+        Some(CliCommand::Daemon {
             command: DaemonCommand::Stop,
         }) => CliMode::StopDaemon,
+        Some(CliCommand::Daemon {
+            command: DaemonCommand::SetLanguage { ref lang },
+        }) => CliMode::SetLanguage {
+            language: lang.clone(),
+        },
         Some(CliCommand::Daemon {
             command:
                 DaemonCommand::SetModel {
@@ -373,24 +391,48 @@ fn main() {
     let cli = Cli::from_arg_matches(&matches).expect("Failed to parse CLI arguments");
     let mode = resolve_cli_mode(&cli);
 
-    if mode == CliMode::StopDaemon {
-        if let Err(err) = daemon::send_stop_command() {
-            eprintln!("error: {err}");
-            process::exit(err.exit_code());
+    match &mode {
+        CliMode::StatusDaemon => {
+            match daemon::send_status_command() {
+                Ok(response) => {
+                    println!(
+                        "state={} language={}",
+                        response.state.as_deref().unwrap_or("unknown"),
+                        response.language.as_deref().unwrap_or("unknown")
+                    );
+                }
+                Err(err) => {
+                    eprintln!("error: {err}");
+                    process::exit(err.exit_code());
+                }
+            }
+            return;
         }
-        return;
-    }
-
-    if let CliMode::SetModel {
-        size,
-        model_language,
-    } = mode
-    {
-        if let Err(err) = daemon::send_set_model_command(size, model_language) {
-            eprintln!("error: {err}");
-            process::exit(err.exit_code());
+        CliMode::StopDaemon => {
+            if let Err(err) = daemon::send_stop_command() {
+                eprintln!("error: {err}");
+                process::exit(err.exit_code());
+            }
+            return;
         }
-        return;
+        CliMode::SetLanguage { language } => {
+            if let Err(err) = daemon::send_set_language_command(language) {
+                eprintln!("error: {err}");
+                process::exit(err.exit_code());
+            }
+            return;
+        }
+        CliMode::SetModel {
+            size,
+            model_language,
+        } => {
+            if let Err(err) = daemon::send_set_model_command(*size, *model_language) {
+                eprintln!("error: {err}");
+                process::exit(err.exit_code());
+            }
+            return;
+        }
+        CliMode::Toggle | CliMode::RunDaemon | CliMode::ListDevices => {}
     }
 
     let file_config = match load_config_file() {
@@ -402,7 +444,7 @@ fn main() {
     };
     let mut config = Config::from_sources(cli, &matches, file_config);
 
-    match mode {
+    match &mode {
         CliMode::Toggle => {
             let language = config
                 .toggle_language
@@ -415,7 +457,10 @@ fn main() {
             return;
         }
         CliMode::RunDaemon | CliMode::ListDevices => {}
-        CliMode::StopDaemon | CliMode::SetModel { .. } => unreachable!(),
+        CliMode::StatusDaemon
+        | CliMode::StopDaemon
+        | CliMode::SetLanguage { .. }
+        | CliMode::SetModel { .. } => unreachable!(),
     }
 
     if mode == CliMode::RunDaemon {
@@ -542,7 +587,7 @@ mod tests {
     use super::*;
     use std::path::Path;
     use std::sync::{Mutex, OnceLock};
-    use std::time::Duration;
+    use std::thread;
 
     static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
@@ -593,6 +638,9 @@ mod tests {
 
     #[test]
     fn toggle_command_reaches_daemon_socket() -> Result<(), AppError> {
+        use std::io::{Read, Write};
+        use std::os::unix::net::UnixListener;
+
         let _lock = lock_tests();
         let runtime_dir = temp_runtime_dir();
         fs::create_dir_all(&runtime_dir).map_err(|err| {
@@ -600,19 +648,35 @@ mod tests {
         })?;
         let _guard = EnvGuard::set("XDG_RUNTIME_DIR", &runtime_dir);
         let socket_path = daemon::daemon_socket_path()?;
-        let (_socket_guard, control_events) = daemon::start_socket_listener(&socket_path)?;
-
-        daemon::send_toggle_command(None)?;
-
-        match control_events.recv_timeout(Duration::from_secs(1)) {
-            Ok(daemon::ControlEvent::Toggle) => Ok(()),
-            Ok(daemon::ControlEvent::Stop) => Err(AppError::runtime("unexpected stop event")),
-            Ok(daemon::ControlEvent::SetModel { .. }) => {
-                Err(AppError::runtime("unexpected set-model event"))
-            }
-            Ok(daemon::ControlEvent::Error(message)) => Err(AppError::runtime(message)),
-            Err(_) => Err(AppError::runtime("toggle command not received")),
+        if let Some(parent) = socket_path.parent() {
+            fs::create_dir_all(parent).map_err(|err| {
+                AppError::runtime(format!("failed to create socket parent: {err}"))
+            })?;
         }
+
+        let listener = UnixListener::bind(&socket_path)
+            .map_err(|err| AppError::runtime(format!("failed to bind test socket: {err}")))?;
+        let server_thread = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("expected client connection");
+            let mut payload = String::new();
+            stream
+                .read_to_string(&mut payload)
+                .expect("expected command payload");
+            stream
+                .write_all(b"{\"api_version\":\"1\",\"ok\":true,\"state\":\"recording\",\"language\":\"en\"}\n")
+                .expect("expected response write");
+            payload
+        });
+
+        let response = daemon::send_toggle_command(None)?;
+        assert!(response.ok);
+        assert_eq!(response.state.as_deref(), Some("recording"));
+
+        let payload = server_thread
+            .join()
+            .map_err(|_| AppError::runtime("server thread panicked"))?;
+        assert_eq!(payload.trim_end(), "toggle");
+        Ok(())
     }
 
     #[test]
@@ -710,6 +774,24 @@ mod tests {
     fn parses_daemon_stop_subcommand() {
         let cli = Cli::try_parse_from(["sv", "daemon", "stop"]).expect("failed to parse cli");
         assert_eq!(resolve_cli_mode(&cli), CliMode::StopDaemon);
+    }
+
+    #[test]
+    fn parses_daemon_status_subcommand() {
+        let cli = Cli::try_parse_from(["sv", "daemon", "status"]).expect("failed to parse cli");
+        assert_eq!(resolve_cli_mode(&cli), CliMode::StatusDaemon);
+    }
+
+    #[test]
+    fn parses_daemon_set_language_subcommand() {
+        let cli = Cli::try_parse_from(["sv", "daemon", "set-language", "--lang", "fr"])
+            .expect("failed to parse cli");
+        assert_eq!(
+            resolve_cli_mode(&cli),
+            CliMode::SetLanguage {
+                language: "fr".to_string(),
+            }
+        );
     }
 
     #[test]

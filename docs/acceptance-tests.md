@@ -115,3 +115,9 @@ These tests validate the product behavior for the offline Linux CLI.
 - Command: run plain `sv` with no additional arguments.
 - Expect: client sends `toggle lang=sv` to the control socket.
 - Pass: control socket receives exactly `toggle lang=sv`.
+
+### AT-12: Control socket toggle + status JSON responses
+- Setup: daemon running with test-support mocks.
+- Command: send `toggle lang=fr`, then `status` over the control socket.
+- Expect: both responses are valid JSON with `ok`, `state`, and `language`.
+- Pass: toggle response reports `recording` in `fr`, and status reports the same state/language.

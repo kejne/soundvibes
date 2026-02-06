@@ -26,7 +26,7 @@ use serde_json::Value;
 
 #[cfg(feature = "test-support")]
 use sv::daemon::test_support::{
-    control_channel, TestAudioBackend, TestOutput, TestTranscriberFactory,
+    control_channel, control_message, TestAudioBackend, TestOutput, TestTranscriberFactory,
 };
 #[cfg(feature = "test-support")]
 use sv::daemon::{DaemonConfig, DaemonDeps};
@@ -230,8 +230,12 @@ fn at04_daemon_toggle_captures_and_transcribes() -> Result<(), Box<dyn Error>> {
 
     let shutdown_trigger = Arc::clone(&shutdown);
     let control_thread = thread::spawn(move || {
-        let _ = control_sender.send(sv::daemon::ControlEvent::Toggle);
-        let _ = control_sender.send(sv::daemon::ControlEvent::Toggle);
+        let _ = control_sender.send(control_message(sv::daemon::ControlEvent::Toggle {
+            language: None,
+        }));
+        let _ = control_sender.send(control_message(sv::daemon::ControlEvent::Toggle {
+            language: None,
+        }));
         thread::sleep(Duration::from_millis(50));
         shutdown_trigger.store(true, Ordering::Relaxed);
     });
@@ -281,8 +285,12 @@ fn at05_jsonl_output_formatting() -> Result<(), Box<dyn Error>> {
 
     let shutdown_trigger = Arc::clone(&shutdown);
     let control_thread = thread::spawn(move || {
-        let _ = control_sender.send(sv::daemon::ControlEvent::Toggle);
-        let _ = control_sender.send(sv::daemon::ControlEvent::Toggle);
+        let _ = control_sender.send(control_message(sv::daemon::ControlEvent::Toggle {
+            language: None,
+        }));
+        let _ = control_sender.send(control_message(sv::daemon::ControlEvent::Toggle {
+            language: None,
+        }));
         thread::sleep(Duration::from_millis(50));
         shutdown_trigger.store(true, Ordering::Relaxed);
     });
@@ -662,6 +670,9 @@ fn at12_plain_toggle_uses_configured_default_language() -> Result<(), Box<dyn Er
             Ok((mut stream, _)) => {
                 let mut payload = String::new();
                 stream.read_to_string(&mut payload)?;
+                stream.write_all(
+                    b"{\"api_version\":\"1\",\"ok\":true,\"state\":\"recording\",\"language\":\"sv\"}\n",
+                )?;
                 break payload;
             }
             Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
@@ -681,6 +692,68 @@ fn at12_plain_toggle_uses_configured_default_language() -> Result<(), Box<dyn Er
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(payload.trim_end(), "toggle lang=sv");
+    Ok(())
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn at12_control_socket_toggle_with_language_and_status_response() -> Result<(), Box<dyn Error>> {
+    let runtime_dir = temp_dir("soundvibes-acceptance-runtime");
+    fs::create_dir_all(&runtime_dir)?;
+    let _runtime_guard = EnvGuard::set("XDG_RUNTIME_DIR", &runtime_dir);
+
+    let socket_path = sv::daemon::daemon_socket_path()?;
+    let (_socket_guard, receiver) = sv::daemon::start_socket_listener(&socket_path)?;
+
+    let deps = DaemonDeps {
+        audio: Box::new(TestAudioBackend::new(
+            vec!["Mic".to_string()],
+            vec![vec![0.2; 160]],
+        )),
+        transcriber_factory: Box::new(TestTranscriberFactory::new(vec!["hello".to_string()])),
+    };
+    let config = DaemonConfig {
+        model_path: None,
+        download_model: false,
+        language: "en".to_string(),
+        model_pool_languages: vec!["en".to_string(), "fr".to_string()],
+        device: None,
+        audio_host: AudioHost::Default,
+        sample_rate: 16_000,
+        format: OutputFormat::Plain,
+        mode: OutputMode::Stdout,
+        vad: VadMode::Off,
+        vad_silence_ms: 800,
+        vad_threshold: 0.015,
+        vad_chunk_ms: 250,
+        debug_audio: false,
+        debug_vad: false,
+        dump_audio: false,
+    };
+
+    let client_thread = thread::spawn(move || -> Result<(), sv::error::AppError> {
+        let toggle_response = sv::daemon::send_toggle_command(Some("fr"))?;
+        assert!(toggle_response.ok);
+        assert_eq!(toggle_response.state.as_deref(), Some("recording"));
+        assert_eq!(toggle_response.language.as_deref(), Some("fr"));
+
+        let status_response = sv::daemon::send_status_command()?;
+        assert!(status_response.ok);
+        assert_eq!(status_response.state.as_deref(), Some("recording"));
+        assert_eq!(status_response.language.as_deref(), Some("fr"));
+
+        let _ = sv::daemon::send_toggle_command(None)?;
+        let _ = sv::daemon::send_stop_command()?;
+        Ok(())
+    });
+
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let mut output = TestOutput::default();
+    sv::daemon::run_daemon_loop(&config, &deps, &mut output, receiver, shutdown.as_ref())?;
+
+    client_thread
+        .join()
+        .map_err(|_| "client thread panicked")??;
     Ok(())
 }
 

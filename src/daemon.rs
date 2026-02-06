@@ -4,6 +4,7 @@ use signal_hook::flag;
 use std::env;
 use std::fs;
 use std::io::{Read, Write};
+use std::net::Shutdown;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -14,6 +15,7 @@ use std::time::Duration;
 
 use crate::audio;
 use crate::error::AppError;
+use crate::ipc;
 use crate::model::{self, ModelLanguage, ModelSize, ModelSpec};
 use crate::output;
 use crate::types::{AudioHost, OutputFormat, OutputMode, VadMode};
@@ -118,13 +120,24 @@ pub fn select_audio_host(audio_host: AudioHost) -> Result<cpal::Host, AppError> 
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ControlEvent {
-    Toggle,
+    Toggle {
+        language: Option<String>,
+    },
+    Status,
+    SetLanguage {
+        language: String,
+    },
     Stop,
     SetModel {
         size: ModelSize,
         model_language: ModelLanguage,
     },
     Error(String),
+}
+
+pub struct ControlMessage {
+    pub event: ControlEvent,
+    pub response: Option<mpsc::Sender<ipc::ControlResponse>>,
 }
 
 pub fn run_daemon(
@@ -150,7 +163,7 @@ pub fn run_daemon_loop(
     config: &DaemonConfig,
     deps: &DaemonDeps,
     output: &mut dyn DaemonOutput,
-    control_events: Receiver<ControlEvent>,
+    control_events: Receiver<ControlMessage>,
     shutdown: &AtomicBool,
 ) -> Result<(), AppError> {
     let host = select_audio_host(config.audio_host)?;
@@ -182,6 +195,7 @@ pub fn run_daemon_loop(
     );
 
     let mut recording = false;
+    let mut active_language = config.language.clone();
     let mut buffer = Vec::new();
     let mut utterance_index = 0u64;
     let mut capture: Option<Box<dyn CaptureSource>> = None;
@@ -192,6 +206,7 @@ pub fn run_daemon_loop(
                 stop_recording(
                     &*transcriber,
                     config,
+                    active_language.as_str(),
                     &vad,
                     &mut capture,
                     &mut buffer,
@@ -203,74 +218,118 @@ pub fn run_daemon_loop(
             break;
         }
         match control_events.recv_timeout(Duration::from_millis(20)) {
-            Ok(ControlEvent::Toggle) => {
-                if recording {
-                    recording = false;
-                    stop_recording(
-                        &*transcriber,
-                        config,
-                        &vad,
-                        &mut capture,
-                        &mut buffer,
-                        &mut utterance_index,
-                        output,
-                    )?;
-                } else {
-                    let new_capture = deps
-                        .audio
-                        .start_capture(&host, config.device.as_deref(), config.sample_rate)
-                        .map_err(|err| match err.kind {
-                            audio::AudioErrorKind::DeviceNotFound if config.device.is_some() => {
-                                AppError::audio(err.message)
-                            }
-                            _ => AppError::audio(err.message),
-                        })?;
-                    recording = true;
-                    buffer.clear();
-                    capture = Some(new_capture);
-                    output.stdout("Toggle on. Recording...");
-                }
-            }
-            Ok(ControlEvent::Stop) => {
-                shutdown.store(true, Ordering::Relaxed);
-            }
-            Ok(ControlEvent::SetModel {
-                size,
-                model_language,
-            }) => {
-                if recording {
-                    recording = false;
-                    buffer.clear();
-                    capture = None;
-                    output.stdout("Recording stopped for model reload.");
-                }
-                let spec = ModelSpec::new(size, model_language);
-                match model::prepare_model(None, &spec, config.download_model) {
-                    Ok(prepared) => {
-                        if prepared.downloaded {
-                            output.stdout("Model download complete.");
+            Ok(message) => {
+                let response = match message.event {
+                    ControlEvent::Toggle { language } => {
+                        if let Some(language) = language {
+                            active_language = language;
                         }
-                        let new_path = prepared.path.clone();
-                        match deps.transcriber_factory.load(Some(&new_path)) {
-                            Ok(new_transcriber) => {
-                                transcriber = new_transcriber;
-                                output.stdout(&format!(
-                                    "Model reloaded: size={}, model-language={}",
-                                    model_size_token(size),
-                                    model_language_token(model_language)
-                                ));
+
+                        if recording {
+                            recording = false;
+                            stop_recording(
+                                &*transcriber,
+                                config,
+                                active_language.as_str(),
+                                &vad,
+                                &mut capture,
+                                &mut buffer,
+                                &mut utterance_index,
+                                output,
+                            )?;
+                            control_ok_response("idle", active_language.as_str())
+                        } else {
+                            let new_capture = deps
+                                .audio
+                                .start_capture(&host, config.device.as_deref(), config.sample_rate)
+                                .map_err(|err| match err.kind {
+                                    audio::AudioErrorKind::DeviceNotFound
+                                        if config.device.is_some() =>
+                                    {
+                                        AppError::audio(err.message)
+                                    }
+                                    _ => AppError::audio(err.message),
+                                })?;
+                            recording = true;
+                            buffer.clear();
+                            capture = Some(new_capture);
+                            output.stdout("Toggle on. Recording...");
+                            control_ok_response("recording", active_language.as_str())
+                        }
+                    }
+                    ControlEvent::Status => {
+                        let state = if recording { "recording" } else { "idle" };
+                        control_ok_response(state, active_language.as_str())
+                    }
+                    ControlEvent::SetLanguage { language } => {
+                        active_language = language;
+                        let state = if recording { "recording" } else { "idle" };
+                        control_ok_response(state, active_language.as_str())
+                    }
+                    ControlEvent::Stop => {
+                        shutdown.store(true, Ordering::Relaxed);
+                        control_ok_response(
+                            if recording { "recording" } else { "idle" },
+                            active_language.as_str(),
+                        )
+                    }
+                    ControlEvent::SetModel {
+                        size,
+                        model_language,
+                    } => {
+                        if recording {
+                            recording = false;
+                            buffer.clear();
+                            capture = None;
+                            output.stdout("Recording stopped for model reload.");
+                        }
+                        let spec = ModelSpec::new(size, model_language);
+                        match model::prepare_model(None, &spec, config.download_model) {
+                            Ok(prepared) => {
+                                if prepared.downloaded {
+                                    output.stdout("Model download complete.");
+                                }
+                                let new_path = prepared.path.clone();
+                                match deps.transcriber_factory.load(Some(&new_path)) {
+                                    Ok(new_transcriber) => {
+                                        transcriber = new_transcriber;
+                                        output.stdout(&format!(
+                                            "Model reloaded: size={}, model-language={}",
+                                            model_size_token(size),
+                                            model_language_token(model_language)
+                                        ));
+                                        control_ok_response("idle", active_language.as_str())
+                                    }
+                                    Err(err) => {
+                                        output.stderr(&format!("Model reload failed: {err}"));
+                                        control_error_response(
+                                            "model_reload_failed",
+                                            err.to_string(),
+                                        )
+                                    }
+                                }
                             }
                             Err(err) => {
                                 output.stderr(&format!("Model reload failed: {err}"));
+                                control_error_response("model_reload_failed", err.to_string())
                             }
                         }
                     }
-                    Err(err) => {
-                        output.stderr(&format!("Model reload failed: {err}"));
+                    ControlEvent::Error(error_message) => {
+                        if let Some(sender) = message.response {
+                            let _ = sender.send(control_error_response(
+                                "listener_error",
+                                error_message.clone(),
+                            ));
+                        }
+                        return Err(AppError::runtime(error_message));
                     }
+                };
+
+                if let Some(sender) = message.response {
+                    let _ = sender.send(response);
                 }
             }
-            Ok(ControlEvent::Error(message)) => return Err(AppError::runtime(message)),
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => {
                 return Err(AppError::runtime("socket listener disconnected"))
@@ -289,6 +348,7 @@ pub fn run_daemon_loop(
 fn stop_recording(
     transcriber: &dyn Transcriber,
     config: &DaemonConfig,
+    language: &str,
     vad: &audio::VadConfig,
     capture: &mut Option<Box<dyn CaptureSource>>,
     buffer: &mut Vec<f32>,
@@ -299,13 +359,22 @@ fn stop_recording(
         .take()
         .ok_or_else(|| AppError::runtime("capture stream missing"))?;
     active.drain(buffer);
-    finalize_recording(transcriber, config, vad, buffer, utterance_index, output)?;
+    finalize_recording(
+        transcriber,
+        config,
+        language,
+        vad,
+        buffer,
+        utterance_index,
+        output,
+    )?;
     Ok(())
 }
 
 fn finalize_recording(
     transcriber: &dyn Transcriber,
     config: &DaemonConfig,
+    language: &str,
     vad: &audio::VadConfig,
     buffer: &[f32],
     utterance_index: &mut u64,
@@ -321,7 +390,7 @@ fn finalize_recording(
         dump_audio_samples(&trimmed, config.sample_rate, output)?;
     }
     let transcript = transcriber
-        .transcribe(&trimmed, Some(&config.language))
+        .transcribe(&trimmed, Some(language))
         .map_err(|err| AppError::runtime(err.to_string()))?;
     emit_transcript(
         config,
@@ -442,7 +511,7 @@ pub fn daemon_socket_path() -> Result<PathBuf, AppError> {
 
 pub fn start_socket_listener(
     socket_path: &Path,
-) -> Result<(SocketGuard, Receiver<ControlEvent>), AppError> {
+) -> Result<(SocketGuard, Receiver<ControlMessage>), AppError> {
     if let Some(parent) = socket_path.parent() {
         fs::create_dir_all(parent).map_err(|err| {
             AppError::runtime(format!(
@@ -483,42 +552,61 @@ pub fn start_socket_listener(
                 Ok(mut stream) => {
                     let mut buffer = String::new();
                     if let Err(err) = stream.read_to_string(&mut buffer) {
-                        eprintln!("socket read error: {err}");
+                        let _ = write_control_response(
+                            &mut stream,
+                            &control_error_response(
+                                "read_error",
+                                format!("socket read error: {err}"),
+                            ),
+                        );
                         continue;
                     }
                     let command = buffer.trim();
-                    if command.is_empty() {
-                        let _ = sender.send(ControlEvent::Toggle);
-                    } else if command.starts_with("toggle") {
-                        match parse_toggle_command(command) {
-                            Ok(()) => {
-                                let _ = sender.send(ControlEvent::Toggle);
-                            }
-                            Err(message) => {
-                                eprintln!("invalid toggle command: {message}");
-                            }
+
+                    let event = match control_event_from_command(command) {
+                        Ok(event) => event,
+                        Err(message) => {
+                            let _ = write_control_response(
+                                &mut stream,
+                                &control_error_response("invalid_request", message),
+                            );
+                            continue;
                         }
-                    } else if command == "stop" {
-                        let _ = sender.send(ControlEvent::Stop);
-                    } else if command.starts_with("set-model") {
-                        match parse_set_model_command(command) {
-                            Ok((size, model_language)) => {
-                                let _ = sender.send(ControlEvent::SetModel {
-                                    size,
-                                    model_language,
-                                });
-                            }
-                            Err(message) => {
-                                eprintln!("invalid set-model command: {message}");
-                            }
-                        }
-                    } else {
-                        eprintln!("unsupported daemon command: {command}");
+                    };
+
+                    let (response_sender, response_receiver) = mpsc::channel();
+                    if sender
+                        .send(ControlMessage {
+                            event,
+                            response: Some(response_sender),
+                        })
+                        .is_err()
+                    {
+                        let _ = write_control_response(
+                            &mut stream,
+                            &control_error_response(
+                                "listener_error",
+                                "daemon loop not available".to_string(),
+                            ),
+                        );
+                        break;
                     }
+
+                    let response = response_receiver
+                        .recv_timeout(Duration::from_secs(2))
+                        .unwrap_or_else(|_| {
+                            control_error_response(
+                                "timeout",
+                                "daemon response timed out".to_string(),
+                            )
+                        });
+                    let _ = write_control_response(&mut stream, &response);
                 }
                 Err(err) => {
-                    let _ =
-                        sender.send(ControlEvent::Error(format!("socket listener error: {err}")));
+                    let _ = sender.send(ControlMessage {
+                        event: ControlEvent::Error(format!("socket listener error: {err}")),
+                        response: None,
+                    });
                     break;
                 }
             }
@@ -526,33 +614,6 @@ pub fn start_socket_listener(
     });
 
     Ok((guard, receiver))
-}
-
-fn parse_toggle_command(command: &str) -> Result<(), String> {
-    let mut tokens = command.split_whitespace();
-    let Some(action) = tokens.next() else {
-        return Ok(());
-    };
-    if action != "toggle" {
-        return Err("toggle command must start with 'toggle'".to_string());
-    }
-
-    let mut seen_lang = false;
-    for token in tokens {
-        if let Some(value) = token.strip_prefix("lang=") {
-            if seen_lang {
-                return Err("duplicate lang token".to_string());
-            }
-            if value.is_empty() {
-                return Err("lang value cannot be empty".to_string());
-            }
-            seen_lang = true;
-        } else {
-            return Err(format!("unexpected token '{token}'"));
-        }
-    }
-
-    Ok(())
 }
 
 fn parse_set_model_command(command: &str) -> Result<(ModelSize, ModelLanguage), String> {
@@ -597,7 +658,49 @@ fn parse_model_language(value: &str) -> Option<ModelLanguage> {
     }
 }
 
-pub fn send_toggle_command(language: Option<&str>) -> Result<(), AppError> {
+fn control_event_from_command(command: &str) -> Result<ControlEvent, String> {
+    if command.starts_with("set-model") {
+        let (size, model_language) = parse_set_model_command(command)?;
+        return Ok(ControlEvent::SetModel {
+            size,
+            model_language,
+        });
+    }
+
+    let request = ipc::parse_control_request(command)?;
+    match request.command {
+        ipc::ControlCommand::Toggle { lang } => Ok(ControlEvent::Toggle { language: lang }),
+        ipc::ControlCommand::Status => Ok(ControlEvent::Status),
+        ipc::ControlCommand::SetLanguage { lang } => {
+            Ok(ControlEvent::SetLanguage { language: lang })
+        }
+        ipc::ControlCommand::Stop => Ok(ControlEvent::Stop),
+    }
+}
+
+fn write_control_response(
+    stream: &mut UnixStream,
+    response: &ipc::ControlResponse,
+) -> Result<(), AppError> {
+    let line = ipc::to_json_line(response)
+        .map_err(|err| AppError::runtime(format!("failed to serialize control response: {err}")))?;
+    stream
+        .write_all(line.as_bytes())
+        .map_err(|err| AppError::runtime(format!("failed to write control response: {err}")))
+}
+
+fn control_ok_response(state: &str, language: &str) -> ipc::ControlResponse {
+    ipc::ControlResponse::ok(Some(state.to_string()), Some(language.to_string()))
+}
+
+fn control_error_response(
+    error: impl Into<String>,
+    message: impl Into<String>,
+) -> ipc::ControlResponse {
+    ipc::ControlResponse::error(error, message)
+}
+
+pub fn send_toggle_command(language: Option<&str>) -> Result<ipc::ControlResponse, AppError> {
     let command = match language {
         Some(language) if !language.trim().is_empty() => format!("toggle lang={language}"),
         _ => "toggle".to_string(),
@@ -605,14 +708,22 @@ pub fn send_toggle_command(language: Option<&str>) -> Result<(), AppError> {
     send_daemon_command(&command)
 }
 
-pub fn send_stop_command() -> Result<(), AppError> {
+pub fn send_status_command() -> Result<ipc::ControlResponse, AppError> {
+    send_daemon_command("status")
+}
+
+pub fn send_set_language_command(language: &str) -> Result<ipc::ControlResponse, AppError> {
+    send_daemon_command(&format!("set-language lang={language}"))
+}
+
+pub fn send_stop_command() -> Result<ipc::ControlResponse, AppError> {
     send_daemon_command("stop")
 }
 
 pub fn send_set_model_command(
     size: ModelSize,
     model_language: ModelLanguage,
-) -> Result<(), AppError> {
+) -> Result<ipc::ControlResponse, AppError> {
     let command = format!(
         "set-model size={} model-language={}",
         model_size_token(size),
@@ -621,7 +732,7 @@ pub fn send_set_model_command(
     send_daemon_command(&command)
 }
 
-fn send_daemon_command(command: &str) -> Result<(), AppError> {
+fn send_daemon_command(command: &str) -> Result<ipc::ControlResponse, AppError> {
     let socket_path = daemon_socket_path()?;
     if !socket_path.exists() {
         return Err(AppError::runtime(format!(
@@ -639,7 +750,31 @@ fn send_daemon_command(command: &str) -> Result<(), AppError> {
     stream
         .write_all(payload.as_bytes())
         .map_err(|err| AppError::runtime(format!("failed to send {command}: {err}")))?;
-    Ok(())
+    stream
+        .shutdown(Shutdown::Write)
+        .map_err(|err| AppError::runtime(format!("failed to finalize command write: {err}")))?;
+
+    let mut response_line = String::new();
+    stream
+        .read_to_string(&mut response_line)
+        .map_err(|err| AppError::runtime(format!("failed to read daemon response: {err}")))?;
+
+    if response_line.trim().is_empty() {
+        return Err(AppError::runtime("daemon returned an empty response"));
+    }
+
+    let response = ipc::parse_control_response(&response_line)
+        .map_err(|err| AppError::runtime(format!("invalid daemon response: {err}")))?;
+    if !response.ok {
+        let message = response
+            .message
+            .clone()
+            .or(response.error.clone())
+            .unwrap_or_else(|| "unknown daemon error".to_string());
+        return Err(AppError::runtime(message));
+    }
+
+    Ok(response)
 }
 
 fn model_size_token(size: ModelSize) -> &'static str {
@@ -719,7 +854,8 @@ pub mod test_support {
     use std::sync::{Arc, Mutex};
 
     use super::{
-        AudioBackend, CaptureSource, ControlEvent, DaemonOutput, Transcriber, TranscriberFactory,
+        AudioBackend, CaptureSource, ControlEvent, ControlMessage, DaemonOutput, Transcriber,
+        TranscriberFactory,
     };
     use crate::audio::{AudioError, AudioErrorKind};
     use crate::error::AppError;
@@ -874,22 +1010,75 @@ pub mod test_support {
         }
     }
 
-    pub fn control_channel() -> (mpsc::Sender<ControlEvent>, mpsc::Receiver<ControlEvent>) {
+    pub fn control_channel() -> (mpsc::Sender<ControlMessage>, mpsc::Receiver<ControlMessage>) {
         mpsc::channel()
+    }
+
+    pub fn control_message(event: ControlEvent) -> ControlMessage {
+        ControlMessage {
+            event,
+            response: None,
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::env;
+    use std::fs;
+    use std::io::{Read, Write};
+    use std::path::Path;
+    use std::process;
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex, OnceLock};
     use std::thread;
     use std::time::Duration;
 
     use super::test_support::{
-        control_channel, TestAudioBackend, TestOutput, TestTranscriberFactory,
+        control_channel, control_message, TestAudioBackend, TestOutput, TestTranscriberFactory,
     };
+
+    static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &Path) -> Self {
+            let previous = env::var_os(key);
+            env::set_var(key, value);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => env::set_var(self.key, value),
+                None => env::remove_var(self.key),
+            }
+        }
+    }
+
+    fn lock_tests() -> std::sync::MutexGuard<'static, ()> {
+        TEST_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("test lock poisoned")
+    }
+
+    fn temp_runtime_dir() -> std::path::PathBuf {
+        let mut dir = env::temp_dir();
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        dir.push(format!("soundvibes-daemon-test-{}-{stamp}", process::id()));
+        dir
+    }
 
     #[test]
     fn daemon_loop_emits_transcript_to_output() -> Result<(), AppError> {
@@ -925,8 +1114,8 @@ mod tests {
 
         let shutdown_trigger = Arc::clone(&shutdown);
         let control_thread = thread::spawn(move || {
-            let _ = control_sender.send(ControlEvent::Toggle);
-            let _ = control_sender.send(ControlEvent::Toggle);
+            let _ = control_sender.send(control_message(ControlEvent::Toggle { language: None }));
+            let _ = control_sender.send(control_message(ControlEvent::Toggle { language: None }));
             thread::sleep(Duration::from_millis(50));
             shutdown_trigger.store(true, Ordering::Relaxed);
         });
@@ -939,6 +1128,99 @@ mod tests {
             .stdout_lines()
             .iter()
             .any(|line| line.contains("Transcript 1: hello")));
+        Ok(())
+    }
+
+    #[test]
+    fn socket_toggle_and_status_return_json_responses() -> Result<(), AppError> {
+        let _lock = lock_tests();
+        let runtime_dir = temp_runtime_dir();
+        fs::create_dir_all(&runtime_dir)
+            .map_err(|err| AppError::runtime(format!("failed to create runtime dir: {err}")))?;
+        let _env_guard = EnvGuard::set("XDG_RUNTIME_DIR", &runtime_dir);
+
+        let socket_path = daemon_socket_path()?;
+        let (_socket_guard, receiver) = start_socket_listener(&socket_path)?;
+
+        let deps = DaemonDeps {
+            audio: Box::new(TestAudioBackend::new(
+                vec!["Mic".to_string()],
+                vec![vec![0.2; 160]],
+            )),
+            transcriber_factory: Box::new(TestTranscriberFactory::new(vec!["hello".to_string()])),
+        };
+        let config = DaemonConfig {
+            model_path: None,
+            download_model: false,
+            language: "en".to_string(),
+            model_pool_languages: vec!["en".to_string()],
+            device: None,
+            audio_host: AudioHost::Default,
+            sample_rate: 16_000,
+            format: OutputFormat::Plain,
+            mode: OutputMode::Stdout,
+            vad: VadMode::Off,
+            vad_silence_ms: 800,
+            vad_threshold: 0.015,
+            vad_chunk_ms: 250,
+            debug_audio: false,
+            debug_vad: false,
+            dump_audio: false,
+        };
+        let client_thread = thread::spawn(move || -> Result<(), AppError> {
+            let toggle_response = send_toggle_command(Some("fr"))?;
+            assert!(toggle_response.ok);
+            assert_eq!(toggle_response.state.as_deref(), Some("recording"));
+            assert_eq!(toggle_response.language.as_deref(), Some("fr"));
+
+            let status_response = send_status_command()?;
+            assert!(status_response.ok);
+            assert_eq!(status_response.state.as_deref(), Some("recording"));
+            assert_eq!(status_response.language.as_deref(), Some("fr"));
+
+            let _ = send_toggle_command(None)?;
+            let _ = send_stop_command()?;
+            Ok(())
+        });
+
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let mut output = TestOutput::default();
+        run_daemon_loop(&config, &deps, &mut output, receiver, shutdown.as_ref())?;
+
+        client_thread
+            .join()
+            .map_err(|_| AppError::runtime("client thread panicked"))??;
+        Ok(())
+    }
+
+    #[test]
+    fn socket_invalid_command_returns_json_error() -> Result<(), AppError> {
+        let _lock = lock_tests();
+        let runtime_dir = temp_runtime_dir();
+        fs::create_dir_all(&runtime_dir)
+            .map_err(|err| AppError::runtime(format!("failed to create runtime dir: {err}")))?;
+        let _env_guard = EnvGuard::set("XDG_RUNTIME_DIR", &runtime_dir);
+
+        let socket_path = daemon_socket_path()?;
+        let (_socket_guard, _receiver) = start_socket_listener(&socket_path)?;
+        let mut stream = UnixStream::connect(&socket_path)
+            .map_err(|err| AppError::runtime(format!("failed to connect to socket: {err}")))?;
+        stream
+            .write_all(b"bogus\n")
+            .map_err(|err| AppError::runtime(format!("failed to write command: {err}")))?;
+        stream
+            .shutdown(Shutdown::Write)
+            .map_err(|err| AppError::runtime(format!("failed to close write side: {err}")))?;
+
+        let mut response_line = String::new();
+        stream
+            .read_to_string(&mut response_line)
+            .map_err(|err| AppError::runtime(format!("failed to read response: {err}")))?;
+        let response = ipc::parse_control_response(&response_line)
+            .map_err(|err| AppError::runtime(format!("failed to parse response: {err}")))?;
+
+        assert!(!response.ok);
+        assert_eq!(response.error.as_deref(), Some("invalid_request"));
         Ok(())
     }
 
@@ -959,13 +1241,19 @@ mod tests {
     }
 
     #[test]
-    fn parses_toggle_command_with_language() {
-        parse_toggle_command("toggle lang=sv").expect("expected parse success");
+    fn parses_toggle_request_command() {
+        let event = control_event_from_command("toggle lang=sv").expect("expected parse success");
+        assert_eq!(
+            event,
+            ControlEvent::Toggle {
+                language: Some("sv".to_string())
+            }
+        );
     }
 
     #[test]
-    fn rejects_toggle_command_with_unknown_token() {
-        let err = parse_toggle_command("toggle foo=bar").expect_err("expected parse error");
+    fn rejects_toggle_request_command_with_unknown_token() {
+        let err = control_event_from_command("toggle foo=bar").expect_err("expected parse error");
         assert!(err.contains("unexpected token"));
     }
 }
