@@ -436,11 +436,18 @@ setup_systemd() {
     fi
     
     mkdir -p "$SERVICE_DIR"
-    
-    cat > "${SERVICE_DIR}/sv.service" << EOF
+
+    SERVICE_TEMPLATE="$(dirname "$0")/contrib/sv.service"
+    if [ -f "$SERVICE_TEMPLATE" ]; then
+        # Keep custom --bin-dir support while sharing a canonical unit template.
+        sed "s|@EXEC_START@|${BIN_DIR}/sv daemon start|g" "$SERVICE_TEMPLATE" > "${SERVICE_DIR}/sv.service"
+    else
+        # install.sh is often run standalone (curl | sh), so keep an inline fallback.
+        cat > "${SERVICE_DIR}/sv.service" << EOF
 [Unit]
-Description=SoundVibes daemon
-After=sound.target
+Description=SoundVibes speech-to-text daemon
+After=graphical-session.target
+PartOf=graphical-session.target
 
 [Service]
 Type=simple
@@ -449,8 +456,9 @@ Restart=on-failure
 RestartSec=5
 
 [Install]
-WantedBy=default.target
+WantedBy=graphical-session.target
 EOF
+    fi
     
     # Reload systemd
     systemctl --user daemon-reload
@@ -459,7 +467,9 @@ EOF
     systemctl --user enable sv.service
     
     print_success "Systemd service created and enabled"
-    print_info "Start the service with: systemctl --user start sv.service"
+    print_info "The service is tied to your graphical session (graphical-session.target)"
+    print_info "Start now with: systemctl --user start sv.service"
+    print_info "If your desktop does not expose graphical-session.target, add 'sv daemon start' to your session startup"
     print_info "Or simply run: sv daemon start"
 }
 
