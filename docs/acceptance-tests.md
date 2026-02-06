@@ -110,3 +110,8 @@ These tests validate the product behavior for the offline Linux CLI.
 - Command: `cargo test --test acceptance -- at11b_installer_rejects_unsupported_platform`.
 - Expect: installer exits non-zero with a clear unsupported-platform error.
 - Pass: test exits non-zero and stderr includes `SoundVibes only supports Linux`.
+### AT-12: Plain toggle uses configured default language
+- Setup: set `language = "sv"` in config.
+- Command: run plain `sv` with no additional arguments.
+- Expect: client sends `toggle lang=sv` to the control socket.
+- Pass: control socket receives exactly `toggle lang=sv`.

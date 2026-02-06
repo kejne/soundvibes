@@ -7,6 +7,7 @@ use std::fs;
 use std::io::{BufRead, BufReader};
 use std::io::{Read, Write};
 use std::net::TcpListener;
+use std::os::unix::net::UnixListener;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
@@ -212,6 +213,7 @@ fn at04_daemon_toggle_captures_and_transcribes() -> Result<(), Box<dyn Error>> {
         model_path: None,
         download_model: false,
         language: "en".to_string(),
+        model_pool_languages: vec!["en".to_string()],
         device: None,
         audio_host: AudioHost::Default,
         sample_rate: 16_000,
@@ -262,6 +264,7 @@ fn at05_jsonl_output_formatting() -> Result<(), Box<dyn Error>> {
         model_path: None,
         download_model: false,
         language: "en".to_string(),
+        model_pool_languages: vec!["en".to_string()],
         device: None,
         audio_host: AudioHost::Default,
         sample_rate: 16_000,
@@ -630,6 +633,54 @@ fn at11b_installer_rejects_unsupported_platform() -> Result<(), Box<dyn Error>> 
         "expected Linux platform error, got: {stderr}"
     );
 
+    Ok(())
+}
+
+#[test]
+fn at12_plain_toggle_uses_configured_default_language() -> Result<(), Box<dyn Error>> {
+    let config_home = temp_dir("soundvibes-acceptance-config");
+    let runtime_dir = temp_dir("soundvibes-acceptance-runtime");
+    write_config(&config_home, "language = \"sv\"\n")?;
+
+    let socket_dir = runtime_dir.join("soundvibes");
+    fs::create_dir_all(&socket_dir)?;
+    let socket_path = socket_dir.join("sv.sock");
+    let listener = UnixListener::bind(&socket_path)?;
+    listener.set_nonblocking(true)?;
+
+    let binary = env!("CARGO_BIN_EXE_sv");
+    let child = Command::new(binary)
+        .env("XDG_CONFIG_HOME", &config_home)
+        .env("XDG_RUNTIME_DIR", &runtime_dir)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    let start = Instant::now();
+    let payload = loop {
+        match listener.accept() {
+            Ok((mut stream, _)) => {
+                let mut payload = String::new();
+                stream.read_to_string(&mut payload)?;
+                break payload;
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                if start.elapsed() > Duration::from_secs(3) {
+                    return Err("timed out waiting for toggle command".into());
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(err) => return Err(Box::new(err)),
+        }
+    };
+
+    let output = child.wait_with_output()?;
+    assert!(
+        output.status.success(),
+        "expected toggle command to exit successfully, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(payload.trim_end(), "toggle lang=sv");
     Ok(())
 }
 

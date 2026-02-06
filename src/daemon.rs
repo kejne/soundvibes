@@ -24,6 +24,7 @@ pub struct DaemonConfig {
     pub model_path: Option<PathBuf>,
     pub download_model: bool,
     pub language: String,
+    pub model_pool_languages: Vec<String>,
     pub device: Option<String>,
     pub audio_host: AudioHost,
     pub sample_rate: u32,
@@ -486,8 +487,17 @@ pub fn start_socket_listener(
                         continue;
                     }
                     let command = buffer.trim();
-                    if command.is_empty() || command == "toggle" {
+                    if command.is_empty() {
                         let _ = sender.send(ControlEvent::Toggle);
+                    } else if command.starts_with("toggle") {
+                        match parse_toggle_command(command) {
+                            Ok(()) => {
+                                let _ = sender.send(ControlEvent::Toggle);
+                            }
+                            Err(message) => {
+                                eprintln!("invalid toggle command: {message}");
+                            }
+                        }
                     } else if command == "stop" {
                         let _ = sender.send(ControlEvent::Stop);
                     } else if command.starts_with("set-model") {
@@ -516,6 +526,33 @@ pub fn start_socket_listener(
     });
 
     Ok((guard, receiver))
+}
+
+fn parse_toggle_command(command: &str) -> Result<(), String> {
+    let mut tokens = command.split_whitespace();
+    let Some(action) = tokens.next() else {
+        return Ok(());
+    };
+    if action != "toggle" {
+        return Err("toggle command must start with 'toggle'".to_string());
+    }
+
+    let mut seen_lang = false;
+    for token in tokens {
+        if let Some(value) = token.strip_prefix("lang=") {
+            if seen_lang {
+                return Err("duplicate lang token".to_string());
+            }
+            if value.is_empty() {
+                return Err("lang value cannot be empty".to_string());
+            }
+            seen_lang = true;
+        } else {
+            return Err(format!("unexpected token '{token}'"));
+        }
+    }
+
+    Ok(())
 }
 
 fn parse_set_model_command(command: &str) -> Result<(ModelSize, ModelLanguage), String> {
@@ -560,8 +597,12 @@ fn parse_model_language(value: &str) -> Option<ModelLanguage> {
     }
 }
 
-pub fn send_toggle_command() -> Result<(), AppError> {
-    send_daemon_command("toggle")
+pub fn send_toggle_command(language: Option<&str>) -> Result<(), AppError> {
+    let command = match language {
+        Some(language) if !language.trim().is_empty() => format!("toggle lang={language}"),
+        _ => "toggle".to_string(),
+    };
+    send_daemon_command(&command)
 }
 
 pub fn send_stop_command() -> Result<(), AppError> {
@@ -867,6 +908,7 @@ mod tests {
             model_path: None,
             download_model: false,
             language: "en".to_string(),
+            model_pool_languages: vec!["en".to_string()],
             device: None,
             audio_host: AudioHost::Default,
             sample_rate: 16_000,
@@ -914,5 +956,16 @@ mod tests {
         let err =
             parse_set_model_command("set-model size=small").expect_err("expected parse error");
         assert!(err.contains("model-language"));
+    }
+
+    #[test]
+    fn parses_toggle_command_with_language() {
+        parse_toggle_command("toggle lang=sv").expect("expected parse success");
+    }
+
+    #[test]
+    fn rejects_toggle_command_with_unknown_token() {
+        let err = parse_toggle_command("toggle foo=bar").expect_err("expected parse error");
+        assert!(err.contains("unexpected token"));
     }
 }

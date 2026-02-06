@@ -11,7 +11,7 @@ use sv::error::AppError;
 use sv::model::{model_language_for_transcription, ModelLanguage, ModelSize, ModelSpec};
 use sv::types::{AudioHost, OutputFormat, OutputMode, VadMode, VadSetting};
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 #[command(name = "sv", version, about = "Offline speech-to-text CLI")]
 struct Cli {
     #[arg(long, value_name = "PATH", global = true)]
@@ -25,6 +25,9 @@ struct Cli {
 
     #[arg(long, default_value = "en", value_name = "CODE", global = true)]
     language: String,
+
+    #[arg(long, value_name = "CODE", global = true)]
+    toggle_language: Option<String>,
 
     #[arg(long, value_name = "NAME", global = true)]
     device: Option<String>,
@@ -87,7 +90,7 @@ struct Cli {
     command: Option<CliCommand>,
 }
 
-#[derive(Subcommand, Debug)]
+#[derive(Subcommand, Debug, Clone)]
 enum CliCommand {
     Daemon {
         #[command(subcommand)]
@@ -155,6 +158,8 @@ struct Config {
     model_language: ModelLanguage,
     download_model: bool,
     language: String,
+    toggle_language: Option<String>,
+    model_pool_languages: Vec<String>,
     device: Option<String>,
     audio_host: AudioHost,
     sample_rate: u32,
@@ -176,6 +181,22 @@ impl Config {
             cli.language
         } else {
             file.language.unwrap_or(cli.language)
+        };
+
+        let toggle_language =
+            if matches.value_source("toggle_language") == Some(ValueSource::CommandLine) {
+                cli.toggle_language
+            } else {
+                None
+            };
+
+        let model_pool_languages = file
+            .model_pool_languages
+            .unwrap_or_else(|| vec![language.clone()]);
+        let model_pool_languages = if model_pool_languages.is_empty() {
+            vec![language.clone()]
+        } else {
+            model_pool_languages
         };
 
         let model_size = if matches.value_source("model_size") == Some(ValueSource::CommandLine) {
@@ -303,6 +324,8 @@ impl Config {
             model_language,
             download_model,
             language,
+            toggle_language,
+            model_pool_languages,
             device,
             audio_host,
             sample_rate,
@@ -329,6 +352,7 @@ struct FileConfig {
     model_language: Option<ModelLanguage>,
     download_model: Option<bool>,
     language: Option<String>,
+    model_pool_languages: Option<Vec<String>>,
     device: Option<String>,
     audio_host: Option<AudioHost>,
     sample_rate: Option<u32>,
@@ -348,33 +372,27 @@ fn main() {
     let matches = Cli::command().get_matches();
     let cli = Cli::from_arg_matches(&matches).expect("Failed to parse CLI arguments");
     let mode = resolve_cli_mode(&cli);
-    match mode {
-        CliMode::Toggle => {
-            if let Err(err) = daemon::send_toggle_command() {
-                eprintln!("error: {err}");
-                process::exit(err.exit_code());
-            }
-            return;
+
+    if mode == CliMode::StopDaemon {
+        if let Err(err) = daemon::send_stop_command() {
+            eprintln!("error: {err}");
+            process::exit(err.exit_code());
         }
-        CliMode::StopDaemon => {
-            if let Err(err) = daemon::send_stop_command() {
-                eprintln!("error: {err}");
-                process::exit(err.exit_code());
-            }
-            return;
-        }
-        CliMode::SetModel {
-            size,
-            model_language,
-        } => {
-            if let Err(err) = daemon::send_set_model_command(size, model_language) {
-                eprintln!("error: {err}");
-                process::exit(err.exit_code());
-            }
-            return;
-        }
-        CliMode::RunDaemon | CliMode::ListDevices => {}
+        return;
     }
+
+    if let CliMode::SetModel {
+        size,
+        model_language,
+    } = mode
+    {
+        if let Err(err) = daemon::send_set_model_command(size, model_language) {
+            eprintln!("error: {err}");
+            process::exit(err.exit_code());
+        }
+        return;
+    }
+
     let file_config = match load_config_file() {
         Ok(config) => config,
         Err(err) => {
@@ -383,6 +401,23 @@ fn main() {
         }
     };
     let mut config = Config::from_sources(cli, &matches, file_config);
+
+    match mode {
+        CliMode::Toggle => {
+            let language = config
+                .toggle_language
+                .as_deref()
+                .unwrap_or(config.language.as_str());
+            if let Err(err) = daemon::send_toggle_command(Some(language)) {
+                eprintln!("error: {err}");
+                process::exit(err.exit_code());
+            }
+            return;
+        }
+        CliMode::RunDaemon | CliMode::ListDevices => {}
+        CliMode::StopDaemon | CliMode::SetModel { .. } => unreachable!(),
+    }
+
     if mode == CliMode::RunDaemon {
         config.list_devices = false;
     }
@@ -408,6 +443,10 @@ fn main() {
         println!("Model: {}", prepared.path.display());
     }
     println!("Language: {}", config.language);
+    println!(
+        "Model pool languages: {}",
+        config.model_pool_languages.join(",")
+    );
     println!("Sample rate: {} Hz", config.sample_rate);
     println!("Format: {:?}", config.format);
     println!("Mode: {:?}", config.mode);
@@ -431,6 +470,7 @@ fn main() {
             model_path,
             download_model: config.download_model,
             language: config.language.clone(),
+            model_pool_languages: config.model_pool_languages.clone(),
             device: config.device.clone(),
             audio_host: config.audio_host,
             sample_rate: config.sample_rate,
@@ -545,6 +585,12 @@ mod tests {
         dir
     }
 
+    fn config_from_args_and_file(args: &[&str], file: FileConfig) -> Config {
+        let matches = Cli::command().get_matches_from(args);
+        let cli = Cli::from_arg_matches(&matches).expect("failed to parse cli args");
+        Config::from_sources(cli, &matches, file)
+    }
+
     #[test]
     fn toggle_command_reaches_daemon_socket() -> Result<(), AppError> {
         let _lock = lock_tests();
@@ -556,7 +602,7 @@ mod tests {
         let socket_path = daemon::daemon_socket_path()?;
         let (_socket_guard, control_events) = daemon::start_socket_listener(&socket_path)?;
 
-        daemon::send_toggle_command()?;
+        daemon::send_toggle_command(None)?;
 
         match control_events.recv_timeout(Duration::from_secs(1)) {
             Ok(daemon::ControlEvent::Toggle) => Ok(()),
@@ -576,7 +622,7 @@ mod tests {
         fs::create_dir_all(&runtime_dir).expect("failed to create test runtime dir");
         let _guard = EnvGuard::set("XDG_RUNTIME_DIR", &runtime_dir);
 
-        let err = daemon::send_toggle_command().expect_err("expected socket error");
+        let err = daemon::send_toggle_command(None).expect_err("expected socket error");
         assert!(err.to_string().contains("daemon socket not found"));
     }
 
@@ -592,7 +638,7 @@ mod tests {
         }
         fs::write(&socket_path, b"not-a-socket").expect("failed to create socket file");
 
-        let err = daemon::send_toggle_command().expect_err("expected socket error");
+        let err = daemon::send_toggle_command(None).expect_err("expected socket error");
         assert!(err.to_string().contains("daemon socket unavailable"));
         assert!(err.to_string().contains("sv daemon start"));
     }
@@ -601,6 +647,57 @@ mod tests {
     fn defaults_to_toggle_when_no_subcommand() {
         let cli = Cli::try_parse_from(["sv"]).expect("failed to parse cli");
         assert_eq!(resolve_cli_mode(&cli), CliMode::Toggle);
+    }
+
+    #[test]
+    fn model_pool_languages_default_to_active_language() {
+        let config = config_from_args_and_file(
+            &["sv"],
+            FileConfig {
+                language: Some("sv".to_string()),
+                ..FileConfig::default()
+            },
+        );
+
+        assert_eq!(config.model_pool_languages, vec!["sv".to_string()]);
+    }
+
+    #[test]
+    fn model_pool_languages_respect_file_value() {
+        let config = config_from_args_and_file(
+            &["sv"],
+            FileConfig {
+                model_pool_languages: Some(vec!["en".to_string(), "fr".to_string()]),
+                ..FileConfig::default()
+            },
+        );
+
+        assert_eq!(
+            config.model_pool_languages,
+            vec!["en".to_string(), "fr".to_string()]
+        );
+    }
+
+    #[test]
+    fn empty_model_pool_languages_falls_back_to_active_language() {
+        let config = config_from_args_and_file(
+            &["sv", "--language", "fr"],
+            FileConfig {
+                model_pool_languages: Some(Vec::new()),
+                ..FileConfig::default()
+            },
+        );
+
+        assert_eq!(config.model_pool_languages, vec!["fr".to_string()]);
+    }
+
+    #[test]
+    fn toggle_language_cli_override_is_captured() {
+        let config =
+            config_from_args_and_file(&["sv", "--toggle-language", "de"], FileConfig::default());
+
+        assert_eq!(config.language, "en");
+        assert_eq!(config.toggle_language.as_deref(), Some("de"));
     }
 
     #[test]
