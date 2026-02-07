@@ -380,6 +380,7 @@ create_config() {
 
 # Model settings
 download_model = true       # Auto-download missing models
+model_size = "small"       # Options: tiny, base, small, medium, large, auto
 model_pool_languages = ["en", "sv", "fr"]  # Optional preload set
 
 # Audio settings

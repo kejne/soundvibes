@@ -24,6 +24,7 @@ use crate::whisper::WhisperContext;
 
 #[derive(Debug, Clone)]
 pub struct DaemonConfig {
+    pub model_size: ModelSize,
     pub download_model: bool,
     pub language: String,
     pub model_pool_languages: Vec<String>,
@@ -218,7 +219,7 @@ impl ModelPool {
         deps: &DaemonDeps,
     ) -> Result<(), AppError> {
         let spec = ModelSpec::new(
-            ModelSize::Small,
+            config.model_size,
             model::model_language_for_transcription(language),
         );
         let transcriber = deps
@@ -1180,6 +1181,10 @@ pub mod test_support {
             self.loaded_specs.lock().expect("loaded specs lock").len()
         }
 
+        pub fn loaded_specs(&self) -> Vec<(ModelSpec, bool)> {
+            self.loaded_specs.lock().expect("loaded specs lock").clone()
+        }
+
         pub fn transcribed_languages(&self) -> Vec<Option<String>> {
             self.transcribe_languages
                 .lock()
@@ -1346,6 +1351,7 @@ mod tests {
             transcriber_factory: Box::new(TestTranscriberFactory::new(vec!["hello".to_string()])),
         };
         let config = DaemonConfig {
+            model_size: ModelSize::Small,
             download_model: false,
             language: "en".to_string(),
             model_pool_languages: vec!["en".to_string()],
@@ -1401,6 +1407,7 @@ mod tests {
             transcriber_factory: Box::new(TestTranscriberFactory::new(vec!["hello".to_string()])),
         };
         let config = DaemonConfig {
+            model_size: ModelSize::Small,
             download_model: false,
             language: "en".to_string(),
             model_pool_languages: vec!["en".to_string()],
@@ -1587,6 +1594,7 @@ mod tests {
             transcriber_factory: Box::new(transcriber_factory.clone()),
         };
         let config = DaemonConfig {
+            model_size: ModelSize::Small,
             download_model: false,
             language: "sv".to_string(),
             model_pool_languages: vec!["en".to_string(), "fr".to_string()],
@@ -1614,6 +1622,42 @@ mod tests {
     }
 
     #[test]
+    fn model_pool_uses_configured_model_size_for_language_loads() -> Result<(), AppError> {
+        let transcriber_factory = TestTranscriberFactory::new(Vec::new());
+        let deps = DaemonDeps {
+            audio: Box::new(TestAudioBackend::new(vec!["Mic".to_string()], Vec::new())),
+            transcriber_factory: Box::new(transcriber_factory.clone()),
+        };
+        let config = DaemonConfig {
+            model_size: ModelSize::Medium,
+            download_model: false,
+            language: "en".to_string(),
+            model_pool_languages: vec!["en".to_string()],
+            device: None,
+            audio_host: AudioHost::Default,
+            sample_rate: 16_000,
+            format: OutputFormat::Plain,
+            mode: OutputMode::Stdout,
+            vad: VadMode::Off,
+            vad_silence_ms: 800,
+            vad_threshold: 0.015,
+            vad_chunk_ms: 250,
+            debug_audio: false,
+            debug_vad: false,
+            dump_audio: false,
+        };
+
+        let _model_pool = ModelPool::preload(&config, &deps)?;
+        let loaded_specs = transcriber_factory.loaded_specs();
+
+        assert!(!loaded_specs.is_empty());
+        assert!(loaded_specs
+            .iter()
+            .all(|(spec, _)| spec.size == ModelSize::Medium));
+        Ok(())
+    }
+
+    #[test]
     fn model_pool_switches_active_language_for_transcription() -> Result<(), AppError> {
         let (sender, receiver) = control_channel();
         let control_sender = sender.clone();
@@ -1628,6 +1672,7 @@ mod tests {
             transcriber_factory: Box::new(transcriber_factory.clone()),
         };
         let config = DaemonConfig {
+            model_size: ModelSize::Small,
             download_model: false,
             language: "en".to_string(),
             model_pool_languages: vec!["en".to_string(), "fr".to_string()],
@@ -1683,6 +1728,7 @@ mod tests {
             transcriber_factory: Box::new(transcriber_factory.clone()),
         };
         let config = DaemonConfig {
+            model_size: ModelSize::Small,
             download_model: false,
             language: "en".to_string(),
             model_pool_languages: vec!["en".to_string()],

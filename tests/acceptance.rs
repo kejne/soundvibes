@@ -34,6 +34,8 @@ use sv::daemon::test_support::{
 #[cfg(feature = "test-support")]
 use sv::daemon::{DaemonConfig, DaemonDeps};
 #[cfg(feature = "test-support")]
+use sv::model::ModelSize;
+#[cfg(feature = "test-support")]
 use sv::types::{AudioHost, OutputFormat, OutputMode, VadMode};
 
 #[test]
@@ -202,6 +204,7 @@ fn at04_daemon_toggle_captures_and_transcribes() -> Result<(), Box<dyn Error>> {
         transcriber_factory: Box::new(TestTranscriberFactory::new(vec!["hello".to_string()])),
     };
     let config = DaemonConfig {
+        model_size: ModelSize::Small,
         download_model: false,
         language: "en".to_string(),
         model_pool_languages: vec!["en".to_string()],
@@ -263,6 +266,7 @@ fn at05_jsonl_output_formatting() -> Result<(), Box<dyn Error>> {
         transcriber_factory: Box::new(TestTranscriberFactory::new(vec!["hello".to_string()])),
     };
     let config = DaemonConfig {
+        model_size: ModelSize::Small,
         download_model: false,
         language: "en".to_string(),
         model_pool_languages: vec!["en".to_string()],
@@ -708,6 +712,7 @@ fn at12_control_socket_toggle_with_language_and_status_response() -> Result<(), 
         transcriber_factory: Box::new(TestTranscriberFactory::new(vec!["hello".to_string()])),
     };
     let config = DaemonConfig {
+        model_size: ModelSize::Small,
         download_model: false,
         language: "en".to_string(),
         model_pool_languages: vec!["en".to_string(), "fr".to_string()],
@@ -785,6 +790,7 @@ fn at13_events_socket_fans_out_to_multiple_clients() -> Result<(), Box<dyn Error
         transcriber_factory: Box::new(TestTranscriberFactory::new(vec!["hello".to_string()])),
     };
     let config = DaemonConfig {
+        model_size: ModelSize::Small,
         download_model: false,
         language: "en".to_string(),
         model_pool_languages: vec!["en".to_string(), "fr".to_string()],
@@ -885,6 +891,7 @@ fn at14_set_language_switches_active_language_and_transcript_language() -> Resul
         transcriber_factory: Box::new(TestTranscriberFactory::new(vec!["hej".to_string()])),
     };
     let config = DaemonConfig {
+        model_size: ModelSize::Small,
         download_model: false,
         language: "en".to_string(),
         model_pool_languages: vec!["en".to_string(), "sv".to_string()],

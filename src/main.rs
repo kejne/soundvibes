@@ -8,11 +8,15 @@ use std::process;
 use sv::audio;
 use sv::daemon;
 use sv::error::AppError;
+use sv::model::ModelSize;
 use sv::types::{AudioHost, OutputFormat, OutputMode, VadMode, VadSetting};
 
 #[derive(Parser, Debug, Clone)]
 #[command(name = "sv", version, about = "Offline speech-to-text CLI")]
 struct Cli {
+    #[arg(long, default_value = "small", value_name = "SIZE", global = true)]
+    model_size: ModelSize,
+
     #[arg(long, default_value = "en", value_name = "CODE", global = true)]
     language: String,
 
@@ -138,6 +142,7 @@ fn resolve_cli_mode(cli: &Cli) -> CliMode {
 
 #[derive(Debug, Clone)]
 struct Config {
+    model_size: ModelSize,
     download_model: bool,
     language: String,
     toggle_language: Option<String>,
@@ -179,6 +184,12 @@ impl Config {
             vec![language.clone()]
         } else {
             model_pool_languages
+        };
+
+        let model_size = if matches.value_source("model_size") == Some(ValueSource::CommandLine) {
+            cli.model_size
+        } else {
+            file.model_size.unwrap_or(cli.model_size)
         };
 
         let device = if matches.value_source("device") == Some(ValueSource::CommandLine) {
@@ -274,6 +285,7 @@ impl Config {
             };
 
         Self {
+            model_size,
             download_model,
             language,
             toggle_language,
@@ -298,6 +310,7 @@ impl Config {
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct FileConfig {
+    model_size: Option<ModelSize>,
     download_model: Option<bool>,
     language: Option<String>,
     model_pool_languages: Option<Vec<String>>,
@@ -385,6 +398,7 @@ fn main() {
     }
 
     println!("SoundVibes sv {}", env!("CARGO_PKG_VERSION"));
+    println!("Model size: {:?}", config.model_size);
     println!("Language: {}", config.language);
     println!(
         "Model pool languages: {}",
@@ -407,6 +421,7 @@ fn main() {
         run_list_devices(&config)
     } else {
         let daemon_config = daemon::DaemonConfig {
+            model_size: config.model_size,
             download_model: config.download_model,
             language: config.language.clone(),
             model_pool_languages: config.model_pool_languages.clone(),
@@ -618,6 +633,33 @@ mod tests {
         );
 
         assert_eq!(config.model_pool_languages, vec!["sv".to_string()]);
+    }
+
+    #[test]
+    fn model_size_defaults_to_small() {
+        let config = config_from_args_and_file(&["sv"], FileConfig::default());
+        assert_eq!(config.model_size, ModelSize::Small);
+    }
+
+    #[test]
+    fn model_size_respects_config_and_cli_override() {
+        let config = config_from_args_and_file(
+            &["sv"],
+            FileConfig {
+                model_size: Some(ModelSize::Medium),
+                ..FileConfig::default()
+            },
+        );
+        assert_eq!(config.model_size, ModelSize::Medium);
+
+        let cli_override = config_from_args_and_file(
+            &["sv", "--model-size", "tiny"],
+            FileConfig {
+                model_size: Some(ModelSize::Large),
+                ..FileConfig::default()
+            },
+        );
+        assert_eq!(cli_override.model_size, ModelSize::Tiny);
     }
 
     #[test]
