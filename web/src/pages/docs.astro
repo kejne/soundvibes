@@ -217,7 +217,7 @@ model_size = "small"           # tiny, base, small, medium, large, auto
 
 # Transcription settings
 language = "en"                # Default active language context
-model_pool_languages = ["en", "sv", "fr"]  # Preload language contexts on daemon start
+model_variants = "en"           # en, multilingual, both
 device = "default"             # Audio device name
 audio_host = "alsa"            # default, alsa
 sample_rate = 16000            # Hz (16000 recommended)
@@ -240,16 +240,19 @@ list_devices = false</code></pre>
         </div>
 
         <div class="glass-card rounded-2xl p-5">
-          <p class="font-semibold text-ink mb-2">Language Model Pool</p>
+          <p class="font-semibold text-ink mb-2">Model Variants</p>
           <p class="text-sm text-ink/70 mb-3">
-            Soundvibes keeps a model context per language key inside the daemon. Set
-            <code class="font-mono">model_pool_languages</code> to preload the languages you switch between most often.
-            If omitted, it defaults to <code class="font-mono">[language]</code>.
+            Soundvibes keeps model contexts per variant (English-only and multilingual), not per language code.
+            Use <code class="font-mono">model_variants</code> to preload
+            <code class="font-mono">en</code>, <code class="font-mono">multilingual</code>, or <code class="font-mono">both</code>.
           </p>
           <p class="text-sm text-ink/70">
-            You can still switch to a language not in the preload list with
+            If omitted, Soundvibes derives this from <code class="font-mono">language</code>
+            (English -> <code class="font-mono">en</code>, otherwise <code class="font-mono">multilingual</code>).
+            Use <code class="font-mono">both</code> to keep both variants warm for fast switching.
+            You can switch active language at runtime with
             <code class="font-mono">sv daemon set-language --lang &lt;CODE&gt;</code> or
-            <code class="font-mono">sv --toggle-language &lt;CODE&gt;</code>; the daemon loads it on demand.
+            <code class="font-mono">sv --toggle-language &lt;CODE&gt;</code>.
           </p>
         </div>
 
@@ -307,7 +310,12 @@ list_devices = false</code></pre>
                   <tr class="border-b border-ink/5">
                     <td class="py-2 pr-4 font-mono text-xs">--model-size</td>
                     <td class="py-2 pr-4">small</td>
-                    <td class="py-2">Model size for all pool languages: tiny, base, small, medium, large, auto</td>
+                    <td class="py-2">Model size for all variants: tiny, base, small, medium, large, auto</td>
+                  </tr>
+                  <tr class="border-b border-ink/5">
+                    <td class="py-2 pr-4 font-mono text-xs">--model-variants</td>
+                    <td class="py-2 pr-4">derived</td>
+                    <td class="py-2">Preload variants: en, multilingual, both</td>
                   </tr>
                   <tr class="border-b border-ink/5">
                     <td class="py-2 pr-4 font-mono text-xs">--device</td>
@@ -418,11 +426,15 @@ list_devices = false</code></pre>
           <ul class="space-y-2 text-sm text-ink/70">
             <li class="flex items-start gap-2">
               <span class="h-2 w-2 rounded-full bg-mint mt-1.5"></span>
-              <span><strong>auto</strong> (default): Multilingual models that support 99 languages. Slightly larger but more flexible.</span>
+              <span><strong>multilingual</strong>: Uses `ggml-&lt;size&gt;.bin` for all non-English languages (and English fallback).</span>
             </li>
             <li class="flex items-start gap-2">
               <span class="h-2 w-2 rounded-full bg-citrus mt-1.5"></span>
-              <span><strong>en</strong>: English-only models. Smaller and faster for English transcription, but cannot handle other languages.</span>
+              <span><strong>en</strong>: Uses `ggml-&lt;size&gt;.en.bin` for English-only transcription.</span>
+            </li>
+            <li class="flex items-start gap-2">
+              <span class="h-2 w-2 rounded-full bg-ink/40 mt-1.5"></span>
+              <span><strong>both</strong>: Preloads both variants so language switching has no first-use delay.</span>
             </li>
           </ul>
         </div>
@@ -440,8 +452,8 @@ list_devices = false</code></pre>
         <div class="glass-card rounded-2xl p-5">
           <p class="font-semibold text-ink mb-3">Per-Language Model Contexts</p>
           <p class="text-sm text-ink/70 mb-3">
-            The daemon keeps separate model contexts by language key, so switching languages does not restart the daemon.
-            Use <code class="font-mono">model_pool_languages</code> to preload common languages, then switch instantly with
+            The daemon keeps model contexts by variant, while active language remains a runtime setting.
+            Use <code class="font-mono">model_variants = "both"</code> to preload both contexts, then switch instantly with
             <code class="font-mono">sv daemon set-language --lang &lt;CODE&gt;</code>.
           </p>
           <p class="text-sm text-ink/70">

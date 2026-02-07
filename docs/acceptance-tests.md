@@ -129,7 +129,7 @@ These tests validate the product behavior for the offline Linux CLI.
 - Pass: both subscriber streams are identical and contain the expected event types.
 
 ### AT-14: Set-language switches active model context
-- Setup: daemon running with test-support mocks, language pool includes `en` and `sv`, and one events subscriber connected.
+- Setup: daemon running with test-support mocks, `model_variants = "both"`, and one events subscriber connected.
 - Command: send `set-language lang=sv`, then `status`, then toggle on/off.
 - Expect: control responses report active language `sv`, `model_loaded` is emitted for `sv`, and `transcript_final` includes `language="sv"`.
 - Pass: command responses and event payloads consistently reference `sv`.

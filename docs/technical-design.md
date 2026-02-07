@@ -28,8 +28,8 @@ This document describes the technical design for the `sv` CLI that performs offl
 - Defaults are applied if keys are missing.
 - Configuration struct shared across pipeline components.
 - Add `mode` to select `stdout` (default) or `inject` for daemon output.
-- Config supports `model_pool_languages` to preload language contexts while keeping `language` as the default active context.
-- Config supports `model_size` as a single size setting applied across all language contexts.
+- Config supports `model_variants` to preload model contexts (`en`, `multilingual`, or `both`) while keeping `language` as the default active context.
+- Config supports `model_size` as a single size setting applied across all model variants.
 - Model selection is automatic per language context (English-optimized for `en`, multilingual otherwise).
 
 ### Audio Capture
@@ -99,7 +99,7 @@ This document describes the technical design for the `sv` CLI that performs offl
 
 ## Configuration
 - Format: TOML.
-- Example fields: `download_model`, `model_size`, `language`, `model_pool_languages`, `device`, `sample_rate`, `format`, `vad`, `mode`.
+- Example fields: `download_model`, `model_size`, `model_variants`, `language`, `device`, `sample_rate`, `format`, `vad`, `mode`.
 
 ## Data Flow
 1. CLI loads config and model.
