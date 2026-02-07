@@ -8,7 +8,7 @@ use std::process;
 use sv::audio;
 use sv::daemon;
 use sv::error::AppError;
-use sv::model::ModelSize;
+use sv::model::{ModelSize, ModelVariants};
 use sv::types::{AudioHost, OutputFormat, OutputMode, VadMode, VadSetting};
 
 #[derive(Parser, Debug, Clone)]
@@ -16,6 +16,9 @@ use sv::types::{AudioHost, OutputFormat, OutputMode, VadMode, VadSetting};
 struct Cli {
     #[arg(long, default_value = "small", value_name = "SIZE", global = true)]
     model_size: ModelSize,
+
+    #[arg(long, value_name = "VARIANT", global = true)]
+    model_variants: Option<ModelVariants>,
 
     #[arg(long, default_value = "en", value_name = "CODE", global = true)]
     language: String,
@@ -143,10 +146,10 @@ fn resolve_cli_mode(cli: &Cli) -> CliMode {
 #[derive(Debug, Clone)]
 struct Config {
     model_size: ModelSize,
+    model_variants: ModelVariants,
     download_model: bool,
     language: String,
     toggle_language: Option<String>,
-    model_pool_languages: Vec<String>,
     device: Option<String>,
     audio_host: AudioHost,
     sample_rate: u32,
@@ -177,20 +180,21 @@ impl Config {
                 None
             };
 
-        let model_pool_languages = file
-            .model_pool_languages
-            .unwrap_or_else(|| vec![language.clone()]);
-        let model_pool_languages = if model_pool_languages.is_empty() {
-            vec![language.clone()]
-        } else {
-            model_pool_languages
-        };
-
         let model_size = if matches.value_source("model_size") == Some(ValueSource::CommandLine) {
             cli.model_size
         } else {
             file.model_size.unwrap_or(cli.model_size)
         };
+
+        let model_variants =
+            if matches.value_source("model_variants") == Some(ValueSource::CommandLine) {
+                cli.model_variants
+                    .unwrap_or_else(|| default_model_variants_for_language(&language))
+            } else {
+                file.model_variants
+                    .or(cli.model_variants)
+                    .unwrap_or_else(|| default_model_variants_for_language(&language))
+            };
 
         let device = if matches.value_source("device") == Some(ValueSource::CommandLine) {
             cli.device
@@ -286,10 +290,10 @@ impl Config {
 
         Self {
             model_size,
+            model_variants,
             download_model,
             language,
             toggle_language,
-            model_pool_languages,
             device,
             audio_host,
             sample_rate,
@@ -311,9 +315,9 @@ impl Config {
 #[serde(default)]
 struct FileConfig {
     model_size: Option<ModelSize>,
+    model_variants: Option<ModelVariants>,
     download_model: Option<bool>,
     language: Option<String>,
-    model_pool_languages: Option<Vec<String>>,
     device: Option<String>,
     audio_host: Option<AudioHost>,
     sample_rate: Option<u32>,
@@ -399,11 +403,8 @@ fn main() {
 
     println!("SoundVibes sv {}", env!("CARGO_PKG_VERSION"));
     println!("Model size: {:?}", config.model_size);
+    println!("Model variants: {:?}", config.model_variants);
     println!("Language: {}", config.language);
-    println!(
-        "Model pool languages: {}",
-        config.model_pool_languages.join(",")
-    );
     println!("Sample rate: {} Hz", config.sample_rate);
     println!("Format: {:?}", config.format);
     println!("Mode: {:?}", config.mode);
@@ -422,9 +423,9 @@ fn main() {
     } else {
         let daemon_config = daemon::DaemonConfig {
             model_size: config.model_size,
+            model_variants: config.model_variants,
             download_model: config.download_model,
             language: config.language.clone(),
-            model_pool_languages: config.model_pool_languages.clone(),
             device: config.device.clone(),
             audio_host: config.audio_host,
             sample_rate: config.sample_rate,
@@ -489,6 +490,14 @@ fn run_list_devices(config: &Config) -> Result<(), AppError> {
         println!("  - {name}");
     }
     Ok(())
+}
+
+fn default_model_variants_for_language(language: &str) -> ModelVariants {
+    if language.eq_ignore_ascii_case("en") {
+        ModelVariants::En
+    } else {
+        ModelVariants::Multilingual
+    }
 }
 
 #[cfg(test)]
@@ -623,19 +632,6 @@ mod tests {
     }
 
     #[test]
-    fn model_pool_languages_default_to_active_language() {
-        let config = config_from_args_and_file(
-            &["sv"],
-            FileConfig {
-                language: Some("sv".to_string()),
-                ..FileConfig::default()
-            },
-        );
-
-        assert_eq!(config.model_pool_languages, vec!["sv".to_string()]);
-    }
-
-    #[test]
     fn model_size_defaults_to_small() {
         let config = config_from_args_and_file(&["sv"], FileConfig::default());
         assert_eq!(config.model_size, ModelSize::Small);
@@ -663,32 +659,36 @@ mod tests {
     }
 
     #[test]
-    fn model_pool_languages_respect_file_value() {
-        let config = config_from_args_and_file(
-            &["sv"],
-            FileConfig {
-                model_pool_languages: Some(vec!["en".to_string(), "fr".to_string()]),
-                ..FileConfig::default()
-            },
-        );
-
-        assert_eq!(
-            config.model_pool_languages,
-            vec!["en".to_string(), "fr".to_string()]
-        );
+    fn model_variants_defaults_to_en_for_english_language() {
+        let config = config_from_args_and_file(&["sv"], FileConfig::default());
+        assert_eq!(config.model_variants, ModelVariants::En);
     }
 
     #[test]
-    fn empty_model_pool_languages_falls_back_to_active_language() {
+    fn model_variants_defaults_to_multilingual_for_non_english_language() {
+        let config = config_from_args_and_file(&["sv", "--language", "sv"], FileConfig::default());
+        assert_eq!(config.model_variants, ModelVariants::Multilingual);
+    }
+
+    #[test]
+    fn model_variants_respects_config_and_cli_override() {
         let config = config_from_args_and_file(
-            &["sv", "--language", "fr"],
+            &["sv"],
             FileConfig {
-                model_pool_languages: Some(Vec::new()),
+                model_variants: Some(ModelVariants::Multilingual),
                 ..FileConfig::default()
             },
         );
+        assert_eq!(config.model_variants, ModelVariants::Multilingual);
 
-        assert_eq!(config.model_pool_languages, vec!["fr".to_string()]);
+        let cli_override = config_from_args_and_file(
+            &["sv", "--model-variants", "en"],
+            FileConfig {
+                model_variants: Some(ModelVariants::Both),
+                ..FileConfig::default()
+            },
+        );
+        assert_eq!(cli_override.model_variants, ModelVariants::En);
     }
 
     #[test]

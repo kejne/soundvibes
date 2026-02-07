@@ -17,7 +17,7 @@ use std::time::Duration;
 use crate::audio;
 use crate::error::AppError;
 use crate::ipc;
-use crate::model::{self, ModelLanguage, ModelSize, ModelSpec};
+use crate::model::{self, ModelLanguage, ModelSize, ModelSpec, ModelVariants};
 use crate::output;
 use crate::types::{AudioHost, OutputFormat, OutputMode, VadMode};
 use crate::whisper::WhisperContext;
@@ -25,9 +25,9 @@ use crate::whisper::WhisperContext;
 #[derive(Debug, Clone)]
 pub struct DaemonConfig {
     pub model_size: ModelSize,
+    pub model_variants: ModelVariants,
     pub download_model: bool,
     pub language: String,
-    pub model_pool_languages: Vec<String>,
     pub device: Option<String>,
     pub audio_host: AudioHost,
     pub sample_rate: u32,
@@ -144,7 +144,7 @@ struct ModelPoolEntry {
 }
 
 struct ModelPool {
-    entries: HashMap<String, ModelPoolEntry>,
+    entries: HashMap<ModelLanguage, ModelPoolEntry>,
 }
 
 impl ModelPool {
@@ -153,45 +153,46 @@ impl ModelPool {
             entries: HashMap::new(),
         };
 
-        let mut preload_languages = config
-            .model_pool_languages
-            .iter()
-            .map(|language| normalize_language(language))
-            .collect::<Vec<_>>();
-        let active_language = normalize_language(&config.language);
-        if !preload_languages.contains(&active_language) {
-            preload_languages.push(active_language);
+        for &model_language in config.model_variants.preload() {
+            pool.load_variant(model_language, config, deps)?;
         }
 
-        for language in preload_languages {
-            pool.load_language(&language, config, deps)?;
-        }
+        let active_language = normalize_language(&config.language);
+        let _ = pool.resolve_language(&active_language, config, deps)?;
 
         Ok(pool)
     }
 
-    fn ensure_language(
+    fn resolve_language(
         &mut self,
         language: &str,
         config: &DaemonConfig,
         deps: &DaemonDeps,
-    ) -> Result<bool, AppError> {
-        if self.entries.contains_key(language) {
-            return Ok(false);
+    ) -> Result<ModelLanguage, AppError> {
+        let preferred = model::model_language_for_transcription(language);
+        let selected = self
+            .select_variant(preferred, config.model_variants)
+            .ok_or_else(|| {
+                AppError::config(format!(
+                    "no compatible model variant configured for language '{language}'"
+                ))
+            })?;
+
+        if !self.entries.contains_key(&selected) {
+            self.load_variant(selected, config, deps)?;
         }
-        self.load_language(language, config, deps)?;
-        Ok(true)
+        Ok(selected)
     }
 
     fn set_entry(
         &mut self,
-        language: &str,
+        variant: ModelLanguage,
         transcriber: Box<dyn Transcriber>,
         model_size: String,
         model_language: String,
     ) {
         self.entries.insert(
-            language.to_string(),
+            variant,
             ModelPoolEntry {
                 transcriber,
                 model_size,
@@ -200,38 +201,51 @@ impl ModelPool {
         );
     }
 
-    fn transcriber_for(&self, language: &str) -> Option<&dyn Transcriber> {
+    fn transcriber_for_variant(&self, variant: ModelLanguage) -> Option<&dyn Transcriber> {
         self.entries
-            .get(language)
+            .get(&variant)
             .map(|entry| entry.transcriber.as_ref())
     }
 
-    fn metadata_for(&self, language: &str) -> Option<(&str, &str)> {
+    fn metadata_for_variant(&self, variant: ModelLanguage) -> Option<(&str, &str)> {
         self.entries
-            .get(language)
+            .get(&variant)
             .map(|entry| (entry.model_size.as_str(), entry.model_language.as_str()))
     }
 
-    fn load_language(
+    fn load_variant(
         &mut self,
-        language: &str,
+        variant: ModelLanguage,
         config: &DaemonConfig,
         deps: &DaemonDeps,
     ) -> Result<(), AppError> {
-        let spec = ModelSpec::new(
-            config.model_size,
-            model::model_language_for_transcription(language),
-        );
+        let spec = ModelSpec::new(config.model_size, variant);
         let transcriber = deps
             .transcriber_factory
             .load(&spec, config.download_model)?;
         self.set_entry(
-            language,
+            variant,
             transcriber,
             model_size_token(spec.size).to_string(),
             model_language_token(spec.language).to_string(),
         );
         Ok(())
+    }
+
+    fn select_variant(
+        &self,
+        preferred: ModelLanguage,
+        configured: ModelVariants,
+    ) -> Option<ModelLanguage> {
+        if configured.includes(preferred) {
+            return Some(preferred);
+        }
+
+        if preferred == ModelLanguage::En && configured.includes(ModelLanguage::Auto) {
+            return Some(ModelLanguage::Auto);
+        }
+
+        None
     }
 }
 
@@ -304,17 +318,18 @@ pub fn run_daemon_loop(
 
     let mut recording = false;
     let mut active_language = normalize_language(&config.language);
+    let mut active_variant = model_pool.resolve_language(active_language.as_str(), config, deps)?;
     let mut buffer = Vec::new();
     let mut utterance_index = 0u64;
     let mut capture: Option<Box<dyn CaptureSource>> = None;
 
     emit_daemon_event(event_sender, ipc::DaemonEventType::DaemonReady);
-    emit_model_loaded_event(event_sender, &model_pool, &active_language);
+    emit_model_loaded_event(event_sender, &model_pool, &active_language, active_variant);
 
     loop {
         if shutdown.load(Ordering::Relaxed) {
             if recording {
-                let active_transcriber = active_transcriber(&model_pool, active_language.as_str())?;
+                let active_transcriber = active_transcriber(&model_pool, active_variant)?;
                 stop_recording(
                     active_transcriber,
                     config,
@@ -342,15 +357,21 @@ pub fn run_daemon_loop(
                     ControlEvent::Toggle { language } => {
                         if let Some(language) = language {
                             let normalized = normalize_language(&language);
-                            model_pool.ensure_language(&normalized, config, deps)?;
+                            active_variant =
+                                model_pool.resolve_language(normalized.as_str(), config, deps)?;
                             active_language = normalized;
-                            emit_model_loaded_event(event_sender, &model_pool, &active_language);
+                            emit_model_loaded_event(
+                                event_sender,
+                                &model_pool,
+                                &active_language,
+                                active_variant,
+                            );
                         }
 
                         if recording {
                             recording = false;
                             let active_transcriber =
-                                active_transcriber(&model_pool, active_language.as_str())?;
+                                active_transcriber(&model_pool, active_variant)?;
                             stop_recording(
                                 active_transcriber,
                                 config,
@@ -400,9 +421,15 @@ pub fn run_daemon_loop(
                     }
                     ControlEvent::SetLanguage { language } => {
                         let normalized = normalize_language(&language);
-                        model_pool.ensure_language(&normalized, config, deps)?;
+                        active_variant =
+                            model_pool.resolve_language(normalized.as_str(), config, deps)?;
                         active_language = normalized;
-                        emit_model_loaded_event(event_sender, &model_pool, &active_language);
+                        emit_model_loaded_event(
+                            event_sender,
+                            &model_pool,
+                            &active_language,
+                            active_variant,
+                        );
                         let state = if recording { "recording" } else { "idle" };
                         control_ok_response(state, active_language.as_str())
                     }
@@ -542,8 +569,9 @@ fn emit_model_loaded_event(
     sender: Option<&mpsc::Sender<ipc::DaemonEvent>>,
     model_pool: &ModelPool,
     language: &str,
+    variant: ModelLanguage,
 ) {
-    let Some((model_size, model_language)) = model_pool.metadata_for(language) else {
+    let Some((model_size, model_language)) = model_pool.metadata_for_variant(variant) else {
         return;
     };
     emit_daemon_event(
@@ -558,11 +586,12 @@ fn emit_model_loaded_event(
 
 fn active_transcriber<'a>(
     model_pool: &'a ModelPool,
-    language: &str,
+    variant: ModelLanguage,
 ) -> Result<&'a dyn Transcriber, AppError> {
-    model_pool.transcriber_for(language).ok_or_else(|| {
+    model_pool.transcriber_for_variant(variant).ok_or_else(|| {
         AppError::runtime(format!(
-            "no model loaded for language '{language}'; set-language first"
+            "no transcriber loaded for model variant '{}'",
+            model_language_token(variant)
         ))
     })
 }
@@ -1354,7 +1383,7 @@ mod tests {
             model_size: ModelSize::Small,
             download_model: false,
             language: "en".to_string(),
-            model_pool_languages: vec!["en".to_string()],
+            model_variants: ModelVariants::Both,
             device: None,
             audio_host: AudioHost::Default,
             sample_rate: 16_000,
@@ -1410,7 +1439,7 @@ mod tests {
             model_size: ModelSize::Small,
             download_model: false,
             language: "en".to_string(),
-            model_pool_languages: vec!["en".to_string()],
+            model_variants: ModelVariants::Both,
             device: None,
             audio_host: AudioHost::Default,
             sample_rate: 16_000,
@@ -1587,7 +1616,7 @@ mod tests {
     }
 
     #[test]
-    fn model_pool_preloads_active_and_configured_languages() -> Result<(), AppError> {
+    fn model_pool_preloads_configured_variants() -> Result<(), AppError> {
         let transcriber_factory = TestTranscriberFactory::new(Vec::new());
         let deps = DaemonDeps {
             audio: Box::new(TestAudioBackend::new(vec!["Mic".to_string()], Vec::new())),
@@ -1597,7 +1626,7 @@ mod tests {
             model_size: ModelSize::Small,
             download_model: false,
             language: "sv".to_string(),
-            model_pool_languages: vec!["en".to_string(), "fr".to_string()],
+            model_variants: ModelVariants::Both,
             device: None,
             audio_host: AudioHost::Default,
             sample_rate: 16_000,
@@ -1614,10 +1643,13 @@ mod tests {
 
         let model_pool = ModelPool::preload(&config, &deps)?;
 
-        assert!(model_pool.transcriber_for("en").is_some());
-        assert!(model_pool.transcriber_for("fr").is_some());
-        assert!(model_pool.transcriber_for("sv").is_some());
-        assert_eq!(transcriber_factory.load_count(), 3);
+        assert!(model_pool
+            .transcriber_for_variant(ModelLanguage::En)
+            .is_some());
+        assert!(model_pool
+            .transcriber_for_variant(ModelLanguage::Auto)
+            .is_some());
+        assert_eq!(transcriber_factory.load_count(), 2);
         Ok(())
     }
 
@@ -1632,7 +1664,7 @@ mod tests {
             model_size: ModelSize::Medium,
             download_model: false,
             language: "en".to_string(),
-            model_pool_languages: vec!["en".to_string()],
+            model_variants: ModelVariants::Both,
             device: None,
             audio_host: AudioHost::Default,
             sample_rate: 16_000,
@@ -1658,6 +1690,73 @@ mod tests {
     }
 
     #[test]
+    fn model_pool_allows_english_with_multilingual_variant_only() -> Result<(), AppError> {
+        let transcriber_factory = TestTranscriberFactory::new(Vec::new());
+        let deps = DaemonDeps {
+            audio: Box::new(TestAudioBackend::new(vec!["Mic".to_string()], Vec::new())),
+            transcriber_factory: Box::new(transcriber_factory.clone()),
+        };
+        let config = DaemonConfig {
+            model_size: ModelSize::Small,
+            download_model: false,
+            language: "en".to_string(),
+            model_variants: ModelVariants::Multilingual,
+            device: None,
+            audio_host: AudioHost::Default,
+            sample_rate: 16_000,
+            format: OutputFormat::Plain,
+            mode: OutputMode::Stdout,
+            vad: VadMode::Off,
+            vad_silence_ms: 800,
+            vad_threshold: 0.015,
+            vad_chunk_ms: 250,
+            debug_audio: false,
+            debug_vad: false,
+            dump_audio: false,
+        };
+
+        let mut model_pool = ModelPool::preload(&config, &deps)?;
+        let resolved = model_pool.resolve_language("en", &config, &deps)?;
+        assert_eq!(resolved, ModelLanguage::Auto);
+        assert_eq!(transcriber_factory.load_count(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn model_pool_rejects_non_english_with_en_only_variant() {
+        let transcriber_factory = TestTranscriberFactory::new(Vec::new());
+        let deps = DaemonDeps {
+            audio: Box::new(TestAudioBackend::new(vec!["Mic".to_string()], Vec::new())),
+            transcriber_factory: Box::new(transcriber_factory),
+        };
+        let config = DaemonConfig {
+            model_size: ModelSize::Small,
+            model_variants: ModelVariants::En,
+            download_model: false,
+            language: "sv".to_string(),
+            device: None,
+            audio_host: AudioHost::Default,
+            sample_rate: 16_000,
+            format: OutputFormat::Plain,
+            mode: OutputMode::Stdout,
+            vad: VadMode::Off,
+            vad_silence_ms: 800,
+            vad_threshold: 0.015,
+            vad_chunk_ms: 250,
+            debug_audio: false,
+            debug_vad: false,
+            dump_audio: false,
+        };
+
+        let err = ModelPool::preload(&config, &deps)
+            .err()
+            .expect("expected config error");
+        assert!(err
+            .to_string()
+            .contains("no compatible model variant configured"));
+    }
+
+    #[test]
     fn model_pool_switches_active_language_for_transcription() -> Result<(), AppError> {
         let (sender, receiver) = control_channel();
         let control_sender = sender.clone();
@@ -1675,7 +1774,7 @@ mod tests {
             model_size: ModelSize::Small,
             download_model: false,
             language: "en".to_string(),
-            model_pool_languages: vec!["en".to_string(), "fr".to_string()],
+            model_variants: ModelVariants::Both,
             device: None,
             audio_host: AudioHost::Default,
             sample_rate: 16_000,
@@ -1731,7 +1830,7 @@ mod tests {
             model_size: ModelSize::Small,
             download_model: false,
             language: "en".to_string(),
-            model_pool_languages: vec!["en".to_string()],
+            model_variants: ModelVariants::Both,
             device: None,
             audio_host: AudioHost::Default,
             sample_rate: 16_000,
