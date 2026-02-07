@@ -20,25 +20,25 @@ These tests validate the product behavior for the offline Linux CLI.
 ## Tests
 
 ### AT-01: CLI starts with valid model
-- Setup: set `model` in config to `${XDG_DATA_HOME:-~/.local/share}/soundvibes/models/ggml-base.en.bin`.
+- Setup: ensure default model files exist under `${XDG_DATA_HOME:-~/.local/share}/soundvibes/models/`.
 - Command: `sv daemon start`
 - Expect: process starts, listens on socket, no error output.
 - Pass: exit code is `0` after user stops the process.
 
 ### AT-01a: Missing model is auto-downloaded
-- Setup: remove `${XDG_DATA_HOME:-~/.local/share}/soundvibes/models/ggml-small.bin`, set `model_size` to `small` and `model_language` to `auto`.
+- Setup: remove `${XDG_DATA_HOME:-~/.local/share}/soundvibes/models/ggml-small.bin` and keep `download_model = true`.
 - Command: `sv daemon start`
 - Expect: model download occurs before startup completes.
 - Pass: model file exists at the default location and daemon starts.
 
 ### AT-01b: Language selects model variant
-- Setup: set `language = "en"` without `model_language`.
+- Setup: set `language = "en"`.
 - Command: `sv daemon start`
 - Expect: model download uses the `.en` variant.
-- Pass: model file path resolves to `ggml-<size>.en.bin` when language is `en` and `model_language` is unset.
+- Pass: model file path resolves to `ggml-small.en.bin` when language is `en`.
 
 ### AT-02: Missing model returns error
-- Setup: set `model` in config to `${XDG_DATA_HOME:-~/.local/share}/soundvibes/models/missing.bin` and set `download_model = false`.
+- Setup: set `download_model = false` and ensure required default model files are absent.
 - Command: `sv daemon start`
 - Expect: error message indicating missing model.
 - Pass: exit code is `2`.
@@ -50,7 +50,7 @@ These tests validate the product behavior for the offline Linux CLI.
 - Pass: exit code is `3`.
 
 ### AT-04: Daemon toggle capture
-- Setup: set `model` in config to `${XDG_DATA_HOME:-~/.local/share}/soundvibes/models/ggml-base.en.bin`.
+- Setup: ensure required default model file is available.
 - Command: `sv daemon start` in one terminal, `sv` to toggle on, then `sv` to toggle off.
 - Action: speak a short sentence while capture is toggled on.
 - Expect: final transcript is printed after toggling off.

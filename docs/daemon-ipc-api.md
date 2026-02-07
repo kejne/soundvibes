@@ -109,24 +109,6 @@ Response:
 {"api_version":"1","ok":true,"state":"idle","language":"en"}
 ```
 
-### Command: set-model
-Reload model for the currently active language.
-
-Request:
-```
-set-model size=small model-language=en
-```
-
-Successful response:
-```json
-{"api_version":"1","ok":true,"state":"idle","language":"en"}
-```
-
-Error response:
-```json
-{"api_version":"1","ok":false,"error":"model_reload_failed","message":"..."}
-```
-
 ## Events
 
 ### Event: daemon_ready
@@ -167,7 +149,7 @@ Emitted when a model context is loaded or activated.
 Notes:
 - Startup emits `model_loaded` for the default active language.
 - `set-language` and `toggle lang=...` emit `model_loaded` for the activated language.
-- When a language is preloaded from config without an explicit `set-model`, `model_size` is `configured`.
+- `model_size` and `model_language` reflect the automatically selected model variant for that language.
 
 ### Event: error
 Emitted when the daemon encounters a recoverable error.
