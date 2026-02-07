@@ -7,6 +7,7 @@ use std::fs;
 use std::io::{BufRead, BufReader};
 use std::io::{Read, Write};
 use std::net::TcpListener;
+use std::os::unix::net::UnixListener;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
@@ -24,11 +25,16 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use serde_json::Value;
 
 #[cfg(feature = "test-support")]
+use std::os::unix::net::UnixStream;
+
+#[cfg(feature = "test-support")]
 use sv::daemon::test_support::{
-    control_channel, TestAudioBackend, TestOutput, TestTranscriberFactory,
+    control_channel, control_message, TestAudioBackend, TestOutput, TestTranscriberFactory,
 };
 #[cfg(feature = "test-support")]
 use sv::daemon::{DaemonConfig, DaemonDeps};
+#[cfg(feature = "test-support")]
+use sv::model::{ModelSize, ModelVariants};
 #[cfg(feature = "test-support")]
 use sv::types::{AudioHost, OutputFormat, OutputMode, VadMode};
 
@@ -50,10 +56,7 @@ fn at01_daemon_starts_with_valid_model() -> Result<(), Box<dyn Error>> {
 
     let config_home = temp_dir("soundvibes-acceptance-config");
     let runtime_dir = temp_dir("soundvibes-acceptance-runtime");
-    write_config(
-        &config_home,
-        &format!("model = \"{}\"\n", model_path.display()),
-    )?;
+    write_config(&config_home, "language = \"en\"\ndownload_model = false\n")?;
 
     let binary = env!("CARGO_BIN_EXE_sv");
     let mut child = Command::new(binary)
@@ -125,14 +128,9 @@ fn at01b_language_selects_model_variant() -> Result<(), Box<dyn Error>> {
 fn at02_missing_model_returns_exit_code_2() -> Result<(), Box<dyn Error>> {
     let config_home = temp_dir("soundvibes-acceptance-config");
     let runtime_dir = temp_dir("soundvibes-acceptance-runtime");
-    let missing_path = temp_dir("soundvibes-missing-model").join("missing.bin");
-    write_config(
-        &config_home,
-        &format!(
-            "model = \"{}\"\ndownload_model = false\n",
-            missing_path.display()
-        ),
-    )?;
+    let data_home = temp_dir("soundvibes-acceptance-data");
+    let _data_guard = EnvGuard::set("XDG_DATA_HOME", &data_home);
+    write_config(&config_home, "download_model = false\n")?;
 
     let binary = env!("CARGO_BIN_EXE_sv");
     let output = Command::new(binary)
@@ -171,10 +169,7 @@ fn at03_invalid_input_device_returns_exit_code_3() -> Result<(), Box<dyn Error>>
     let runtime_dir = temp_dir("soundvibes-acceptance-runtime");
     write_config(
         &config_home,
-        &format!(
-            "model = \"{}\"\ndevice = \"nonexistent\"\n",
-            model_path.display()
-        ),
+        "language = \"en\"\ndownload_model = false\ndevice = \"nonexistent\"\n",
     )?;
 
     let binary = env!("CARGO_BIN_EXE_sv");
@@ -209,7 +204,8 @@ fn at04_daemon_toggle_captures_and_transcribes() -> Result<(), Box<dyn Error>> {
         transcriber_factory: Box::new(TestTranscriberFactory::new(vec!["hello".to_string()])),
     };
     let config = DaemonConfig {
-        model_path: None,
+        model_size: ModelSize::Small,
+        model_variants: ModelVariants::Both,
         download_model: false,
         language: "en".to_string(),
         device: None,
@@ -228,13 +224,24 @@ fn at04_daemon_toggle_captures_and_transcribes() -> Result<(), Box<dyn Error>> {
 
     let shutdown_trigger = Arc::clone(&shutdown);
     let control_thread = thread::spawn(move || {
-        let _ = control_sender.send(sv::daemon::ControlEvent::Toggle);
-        let _ = control_sender.send(sv::daemon::ControlEvent::Toggle);
+        let _ = control_sender.send(control_message(sv::daemon::ControlEvent::Toggle {
+            language: None,
+        }));
+        let _ = control_sender.send(control_message(sv::daemon::ControlEvent::Toggle {
+            language: None,
+        }));
         thread::sleep(Duration::from_millis(50));
         shutdown_trigger.store(true, Ordering::Relaxed);
     });
 
-    sv::daemon::run_daemon_loop(&config, &deps, &mut output, receiver, shutdown.as_ref())?;
+    sv::daemon::run_daemon_loop(
+        &config,
+        &deps,
+        &mut output,
+        receiver,
+        shutdown.as_ref(),
+        None,
+    )?;
     control_thread.join().expect("control thread failed");
 
     assert!(output
@@ -259,7 +266,8 @@ fn at05_jsonl_output_formatting() -> Result<(), Box<dyn Error>> {
         transcriber_factory: Box::new(TestTranscriberFactory::new(vec!["hello".to_string()])),
     };
     let config = DaemonConfig {
-        model_path: None,
+        model_size: ModelSize::Small,
+        model_variants: ModelVariants::Both,
         download_model: false,
         language: "en".to_string(),
         device: None,
@@ -278,13 +286,24 @@ fn at05_jsonl_output_formatting() -> Result<(), Box<dyn Error>> {
 
     let shutdown_trigger = Arc::clone(&shutdown);
     let control_thread = thread::spawn(move || {
-        let _ = control_sender.send(sv::daemon::ControlEvent::Toggle);
-        let _ = control_sender.send(sv::daemon::ControlEvent::Toggle);
+        let _ = control_sender.send(control_message(sv::daemon::ControlEvent::Toggle {
+            language: None,
+        }));
+        let _ = control_sender.send(control_message(sv::daemon::ControlEvent::Toggle {
+            language: None,
+        }));
         thread::sleep(Duration::from_millis(50));
         shutdown_trigger.store(true, Ordering::Relaxed);
     });
 
-    sv::daemon::run_daemon_loop(&config, &deps, &mut output, receiver, shutdown.as_ref())?;
+    sv::daemon::run_daemon_loop(
+        &config,
+        &deps,
+        &mut output,
+        receiver,
+        shutdown.as_ref(),
+        None,
+    )?;
     control_thread.join().expect("control thread failed");
 
     let json_line = output
@@ -321,10 +340,7 @@ fn at06_offline_operation() -> Result<(), Box<dyn Error>> {
 
     let config_home = temp_dir("soundvibes-acceptance-config");
     let runtime_dir = temp_dir("soundvibes-acceptance-runtime");
-    write_config(
-        &config_home,
-        &format!("model = \"{}\"\n", model_path.display()),
-    )?;
+    write_config(&config_home, "language = \"en\"\ndownload_model = false\n")?;
 
     let binary = env!("CARGO_BIN_EXE_sv");
     let mut child = Command::new(binary)
@@ -373,10 +389,7 @@ fn at07_gpu_auto_select() -> Result<(), Box<dyn Error>> {
 
     let config_home = temp_dir("soundvibes-acceptance-config");
     let runtime_dir = temp_dir("soundvibes-acceptance-runtime");
-    write_config(
-        &config_home,
-        &format!("model = \"{}\"\n", model_path.display()),
-    )?;
+    write_config(&config_home, "language = \"en\"\ndownload_model = false\n")?;
 
     let stderr_lines = run_daemon_for_logs(&config_home, &runtime_dir)?;
     let stderr_joined = stderr_lines.join("\n");
@@ -407,10 +420,7 @@ fn at07_cpu_fallback() -> Result<(), Box<dyn Error>> {
 
     let config_home = temp_dir("soundvibes-acceptance-config");
     let runtime_dir = temp_dir("soundvibes-acceptance-runtime");
-    write_config(
-        &config_home,
-        &format!("model = \"{}\"\n", model_path.display()),
-    )?;
+    write_config(&config_home, "language = \"en\"\ndownload_model = false\n")?;
 
     let stderr_lines = run_daemon_for_logs(&config_home, &runtime_dir)?;
     let stderr_joined = stderr_lines.join("\n");
@@ -633,6 +643,365 @@ fn at11b_installer_rejects_unsupported_platform() -> Result<(), Box<dyn Error>> 
     Ok(())
 }
 
+#[test]
+fn at12_plain_toggle_uses_configured_default_language() -> Result<(), Box<dyn Error>> {
+    let config_home = temp_dir("soundvibes-acceptance-config");
+    let runtime_dir = temp_dir("soundvibes-acceptance-runtime");
+    write_config(&config_home, "language = \"sv\"\n")?;
+
+    let socket_dir = runtime_dir.join("soundvibes");
+    fs::create_dir_all(&socket_dir)?;
+    let socket_path = socket_dir.join("sv.sock");
+    let listener = UnixListener::bind(&socket_path)?;
+    listener.set_nonblocking(true)?;
+
+    let binary = env!("CARGO_BIN_EXE_sv");
+    let child = Command::new(binary)
+        .env("XDG_CONFIG_HOME", &config_home)
+        .env("XDG_RUNTIME_DIR", &runtime_dir)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    let start = Instant::now();
+    let payload = loop {
+        match listener.accept() {
+            Ok((mut stream, _)) => {
+                let mut payload = String::new();
+                stream.read_to_string(&mut payload)?;
+                stream.write_all(
+                    b"{\"api_version\":\"1\",\"ok\":true,\"state\":\"recording\",\"language\":\"sv\"}\n",
+                )?;
+                break payload;
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                if start.elapsed() > Duration::from_secs(3) {
+                    return Err("timed out waiting for toggle command".into());
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(err) => return Err(Box::new(err)),
+        }
+    };
+
+    let output = child.wait_with_output()?;
+    assert!(
+        output.status.success(),
+        "expected toggle command to exit successfully, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(payload.trim_end(), "toggle lang=sv");
+    Ok(())
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn at12_control_socket_toggle_with_language_and_status_response() -> Result<(), Box<dyn Error>> {
+    let runtime_dir = temp_dir("soundvibes-acceptance-runtime");
+    fs::create_dir_all(&runtime_dir)?;
+    let _runtime_guard = EnvGuard::set("XDG_RUNTIME_DIR", &runtime_dir);
+
+    let socket_path = sv::daemon::daemon_socket_path()?;
+    let (_socket_guard, receiver) = sv::daemon::start_socket_listener(&socket_path)?;
+
+    let deps = DaemonDeps {
+        audio: Box::new(TestAudioBackend::new(
+            vec!["Mic".to_string()],
+            vec![vec![0.2; 160]],
+        )),
+        transcriber_factory: Box::new(TestTranscriberFactory::new(vec!["hello".to_string()])),
+    };
+    let config = DaemonConfig {
+        model_size: ModelSize::Small,
+        model_variants: ModelVariants::Both,
+        download_model: false,
+        language: "en".to_string(),
+        device: None,
+        audio_host: AudioHost::Default,
+        sample_rate: 16_000,
+        format: OutputFormat::Plain,
+        mode: OutputMode::Stdout,
+        vad: VadMode::Off,
+        vad_silence_ms: 800,
+        vad_threshold: 0.015,
+        vad_chunk_ms: 250,
+        debug_audio: false,
+        debug_vad: false,
+        dump_audio: false,
+    };
+
+    let client_thread = thread::spawn(move || -> Result<(), sv::error::AppError> {
+        let toggle_response = sv::daemon::send_toggle_command(Some("fr"))?;
+        assert!(toggle_response.ok);
+        assert_eq!(toggle_response.state.as_deref(), Some("recording"));
+        assert_eq!(toggle_response.language.as_deref(), Some("fr"));
+
+        let status_response = sv::daemon::send_status_command()?;
+        assert!(status_response.ok);
+        assert_eq!(status_response.state.as_deref(), Some("recording"));
+        assert_eq!(status_response.language.as_deref(), Some("fr"));
+
+        let _ = sv::daemon::send_toggle_command(None)?;
+        let _ = sv::daemon::send_stop_command()?;
+        Ok(())
+    });
+
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let mut output = TestOutput::default();
+    sv::daemon::run_daemon_loop(
+        &config,
+        &deps,
+        &mut output,
+        receiver,
+        shutdown.as_ref(),
+        None,
+    )?;
+
+    client_thread
+        .join()
+        .map_err(|_| "client thread panicked")??;
+    Ok(())
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn at13_events_socket_fans_out_to_multiple_clients() -> Result<(), Box<dyn Error>> {
+    let runtime_dir = temp_dir("soundvibes-acceptance-runtime");
+    fs::create_dir_all(&runtime_dir)?;
+    let _runtime_guard = EnvGuard::set("XDG_RUNTIME_DIR", &runtime_dir);
+
+    let control_socket_path = sv::daemon::daemon_socket_path()?;
+    let (_control_guard, receiver) = sv::daemon::start_socket_listener(&control_socket_path)?;
+    let events_socket_path = sv::daemon::daemon_events_socket_path()?;
+    let (_events_guard, event_sender) =
+        sv::daemon::start_events_socket_listener(&events_socket_path)?;
+
+    let mut first_subscriber = UnixStream::connect(&events_socket_path)?;
+    let mut second_subscriber = UnixStream::connect(&events_socket_path)?;
+    first_subscriber.set_read_timeout(Some(Duration::from_secs(2)))?;
+    second_subscriber.set_read_timeout(Some(Duration::from_secs(2)))?;
+    thread::sleep(Duration::from_millis(40));
+
+    let deps = DaemonDeps {
+        audio: Box::new(TestAudioBackend::new(
+            vec!["Mic".to_string()],
+            vec![vec![0.2; 160]],
+        )),
+        transcriber_factory: Box::new(TestTranscriberFactory::new(vec!["hello".to_string()])),
+    };
+    let config = DaemonConfig {
+        model_size: ModelSize::Small,
+        model_variants: ModelVariants::Both,
+        download_model: false,
+        language: "en".to_string(),
+        device: None,
+        audio_host: AudioHost::Default,
+        sample_rate: 16_000,
+        format: OutputFormat::Plain,
+        mode: OutputMode::Stdout,
+        vad: VadMode::Off,
+        vad_silence_ms: 800,
+        vad_threshold: 0.015,
+        vad_chunk_ms: 250,
+        debug_audio: false,
+        debug_vad: false,
+        dump_audio: false,
+    };
+
+    let client_thread = thread::spawn(move || -> Result<(), sv::error::AppError> {
+        let _ = sv::daemon::send_toggle_command(Some("fr"))?;
+        let _ = sv::daemon::send_toggle_command(None)?;
+        let _ = sv::daemon::send_stop_command()?;
+        Ok(())
+    });
+
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let mut output = TestOutput::default();
+    sv::daemon::run_daemon_loop(
+        &config,
+        &deps,
+        &mut output,
+        receiver,
+        shutdown.as_ref(),
+        Some(&event_sender),
+    )?;
+
+    client_thread
+        .join()
+        .map_err(|_| "client thread panicked")??;
+
+    let first_events = read_daemon_events(&mut first_subscriber, 6)?;
+    let second_events = read_daemon_events(&mut second_subscriber, 6)?;
+    assert_eq!(
+        first_events, second_events,
+        "subscribers should see identical events"
+    );
+
+    assert!(matches!(
+        first_events[0].event,
+        sv::ipc::DaemonEventType::DaemonReady
+    ));
+    assert!(matches!(
+        first_events[1].event,
+        sv::ipc::DaemonEventType::ModelLoaded { .. }
+    ));
+    assert!(matches!(
+        first_events[2].event,
+        sv::ipc::DaemonEventType::ModelLoaded { .. }
+    ));
+    assert!(matches!(
+        first_events[3].event,
+        sv::ipc::DaemonEventType::RecordingStarted { .. }
+    ));
+    assert!(matches!(
+        first_events[4].event,
+        sv::ipc::DaemonEventType::TranscriptFinal { .. }
+    ));
+    assert!(matches!(
+        first_events[5].event,
+        sv::ipc::DaemonEventType::RecordingStopped { .. }
+    ));
+
+    Ok(())
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn at14_set_language_switches_active_language_and_transcript_language() -> Result<(), Box<dyn Error>>
+{
+    let runtime_dir = temp_dir("soundvibes-acceptance-runtime");
+    fs::create_dir_all(&runtime_dir)?;
+    let _runtime_guard = EnvGuard::set("XDG_RUNTIME_DIR", &runtime_dir);
+
+    let control_socket_path = sv::daemon::daemon_socket_path()?;
+    let (_control_guard, receiver) = sv::daemon::start_socket_listener(&control_socket_path)?;
+    let events_socket_path = sv::daemon::daemon_events_socket_path()?;
+    let (_events_guard, event_sender) =
+        sv::daemon::start_events_socket_listener(&events_socket_path)?;
+
+    let mut subscriber = UnixStream::connect(&events_socket_path)?;
+    subscriber.set_read_timeout(Some(Duration::from_secs(2)))?;
+    thread::sleep(Duration::from_millis(40));
+
+    let deps = DaemonDeps {
+        audio: Box::new(TestAudioBackend::new(
+            vec!["Mic".to_string()],
+            vec![vec![0.2; 160]],
+        )),
+        transcriber_factory: Box::new(TestTranscriberFactory::new(vec!["hej".to_string()])),
+    };
+    let config = DaemonConfig {
+        model_size: ModelSize::Small,
+        model_variants: ModelVariants::Both,
+        download_model: false,
+        language: "en".to_string(),
+        device: None,
+        audio_host: AudioHost::Default,
+        sample_rate: 16_000,
+        format: OutputFormat::Plain,
+        mode: OutputMode::Stdout,
+        vad: VadMode::Off,
+        vad_silence_ms: 800,
+        vad_threshold: 0.015,
+        vad_chunk_ms: 250,
+        debug_audio: false,
+        debug_vad: false,
+        dump_audio: false,
+    };
+
+    let client_thread = thread::spawn(move || -> Result<(), sv::error::AppError> {
+        let set_language = sv::daemon::send_set_language_command("sv")?;
+        assert!(set_language.ok);
+        assert_eq!(set_language.language.as_deref(), Some("sv"));
+        assert_eq!(set_language.state.as_deref(), Some("idle"));
+
+        let status = sv::daemon::send_status_command()?;
+        assert!(status.ok);
+        assert_eq!(status.language.as_deref(), Some("sv"));
+        assert_eq!(status.state.as_deref(), Some("idle"));
+
+        let _ = sv::daemon::send_toggle_command(None)?;
+        let _ = sv::daemon::send_toggle_command(None)?;
+        let _ = sv::daemon::send_stop_command()?;
+        Ok(())
+    });
+
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let mut output = TestOutput::default();
+    sv::daemon::run_daemon_loop(
+        &config,
+        &deps,
+        &mut output,
+        receiver,
+        shutdown.as_ref(),
+        Some(&event_sender),
+    )?;
+
+    client_thread
+        .join()
+        .map_err(|_| "client thread panicked")??;
+
+    let events = read_daemon_events(&mut subscriber, 6)?;
+    assert!(events.iter().any(|event| {
+        matches!(
+            event.event,
+            sv::ipc::DaemonEventType::ModelLoaded { ref language, .. } if language == "sv"
+        )
+    }));
+    assert!(events.iter().any(|event| {
+        matches!(
+            event.event,
+            sv::ipc::DaemonEventType::TranscriptFinal { ref language, .. } if language == "sv"
+        )
+    }));
+
+    Ok(())
+}
+
+#[cfg(feature = "test-support")]
+fn read_daemon_events(
+    stream: &mut UnixStream,
+    count: usize,
+) -> Result<Vec<sv::ipc::DaemonEvent>, Box<dyn Error>> {
+    let mut events = Vec::with_capacity(count);
+    for _ in 0..count {
+        let line = read_event_line(stream)?;
+        let event = sv::ipc::from_json_line(&line)?;
+        events.push(event);
+    }
+    Ok(events)
+}
+
+#[cfg(feature = "test-support")]
+fn read_event_line(stream: &mut UnixStream) -> Result<String, Box<dyn Error>> {
+    let mut line = Vec::new();
+    let mut byte = [0u8; 1];
+    loop {
+        match stream.read(&mut byte) {
+            Ok(0) => break,
+            Ok(_) => {
+                line.push(byte[0]);
+                if byte[0] == b'\n' {
+                    break;
+                }
+            }
+            Err(err)
+                if err.kind() == std::io::ErrorKind::WouldBlock
+                    || err.kind() == std::io::ErrorKind::TimedOut =>
+            {
+                return Err("timed out while reading daemon event".into());
+            }
+            Err(err) => return Err(Box::new(err)),
+        }
+    }
+
+    if line.is_empty() {
+        return Err("daemon events stream closed before receiving expected event".into());
+    }
+
+    String::from_utf8(line).map_err(|err| err.into())
+}
+
 fn command_available(command: &str) -> bool {
     Command::new(command)
         .arg("--version")
@@ -746,9 +1115,6 @@ fn assert_install_success(output: &std::process::Output, context: &str) {
 }
 
 fn model_path() -> Result<PathBuf, Box<dyn Error>> {
-    if let Ok(path) = env::var("SV_MODEL_PATH") {
-        return Ok(PathBuf::from(path));
-    }
     let data_home = env::var("XDG_DATA_HOME")
         .map(PathBuf::from)
         .or_else(|_| env::var("HOME").map(|home| PathBuf::from(home).join(".local/share")))
@@ -756,7 +1122,7 @@ fn model_path() -> Result<PathBuf, Box<dyn Error>> {
     Ok(data_home
         .join("soundvibes")
         .join("models")
-        .join("ggml-base.en.bin"))
+        .join("ggml-small.en.bin"))
 }
 
 fn temp_dir(prefix: &str) -> PathBuf {

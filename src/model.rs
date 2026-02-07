@@ -40,11 +40,38 @@ impl ModelSize {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, ValueEnum, Deserialize)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, ValueEnum, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ModelLanguage {
     Auto,
     En,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, ValueEnum, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ModelVariants {
+    En,
+    Multilingual,
+    Both,
+}
+
+impl ModelVariants {
+    pub fn includes(self, model_language: ModelLanguage) -> bool {
+        match (self, model_language) {
+            (ModelVariants::Both, _) => true,
+            (ModelVariants::En, ModelLanguage::En) => true,
+            (ModelVariants::Multilingual, ModelLanguage::Auto) => true,
+            _ => false,
+        }
+    }
+
+    pub fn preload(self) -> &'static [ModelLanguage] {
+        match self {
+            ModelVariants::En => &[ModelLanguage::En],
+            ModelVariants::Multilingual => &[ModelLanguage::Auto],
+            ModelVariants::Both => &[ModelLanguage::En, ModelLanguage::Auto],
+        }
+    }
 }
 
 pub fn model_language_for_transcription(language: &str) -> ModelLanguage {

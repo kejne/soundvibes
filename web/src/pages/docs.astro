@@ -211,14 +211,13 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 
         <div class="glass-card rounded-2xl p-5">
           <p class="text-xs font-semibold uppercase tracking-[0.2em] text-ink/50 mb-3">Complete Example</p>
-          <pre class="rounded-lg bg-ink/5 px-4 py-3 font-mono text-xs text-ink/80 overflow-x-auto"><code># Model configuration
-model = "/home/user/.local/share/soundvibes/models/ggml-small.bin"
-model_size = "small"           # tiny, base, small, medium, large
-model_language = "auto"        # auto, en
+          <pre class="rounded-lg bg-ink/5 px-4 py-3 font-mono text-xs text-ink/80 overflow-x-auto"><code># Model behavior
 download_model = true          # Allow auto-download on first run
+model_size = "small"           # tiny, base, small, medium, large, auto
 
 # Transcription settings
-language = "en"                # Transcription language code
+language = "en"                # Default active language context
+model_variants = "en"           # en, multilingual, both
 device = "default"             # Audio device name
 audio_host = "alsa"            # default, alsa
 sample_rate = 16000            # Hz (16000 recommended)
@@ -238,6 +237,23 @@ debug_audio = false
 debug_vad = false
 dump_audio = false             # Save captured audio to WAV
 list_devices = false</code></pre>
+        </div>
+
+        <div class="glass-card rounded-2xl p-5">
+          <p class="font-semibold text-ink mb-2">Model Variants</p>
+          <p class="text-sm text-ink/70 mb-3">
+            Soundvibes keeps model contexts per variant (English-only and multilingual), not per language code.
+            Use <code class="font-mono">model_variants</code> to preload
+            <code class="font-mono">en</code>, <code class="font-mono">multilingual</code>, or <code class="font-mono">both</code>.
+          </p>
+          <p class="text-sm text-ink/70">
+            If omitted, Soundvibes derives this from <code class="font-mono">language</code>
+            (English -> <code class="font-mono">en</code>, otherwise <code class="font-mono">multilingual</code>).
+            Use <code class="font-mono">both</code> to keep both variants warm for fast switching.
+            You can switch active language at runtime with
+            <code class="font-mono">sv daemon set-language --lang &lt;CODE&gt;</code> or
+            <code class="font-mono">sv --toggle-language &lt;CODE&gt;</code>.
+          </p>
         </div>
 
         <div class="grid gap-4 sm:grid-cols-3">
@@ -277,24 +293,29 @@ list_devices = false</code></pre>
                 </thead>
                 <tbody class="text-ink/70">
                   <tr class="border-b border-ink/5">
-                    <td class="py-2 pr-4 font-mono text-xs">--model</td>
+                    <td class="py-2 pr-4 font-mono text-xs">--language</td>
+                    <td class="py-2 pr-4">en</td>
+                    <td class="py-2">Transcription language code</td>
+                  </tr>
+                  <tr class="border-b border-ink/5">
+                    <td class="py-2 pr-4 font-mono text-xs">--toggle-language</td>
                     <td class="py-2 pr-4">-</td>
-                    <td class="py-2">Path to whisper model file (ggml format)</td>
+                    <td class="py-2">Override language for a single toggle call</td>
+                  </tr>
+                  <tr class="border-b border-ink/5">
+                    <td class="py-2 pr-4 font-mono text-xs">--download-model</td>
+                    <td class="py-2 pr-4">true</td>
+                    <td class="py-2">Allow downloading missing models automatically</td>
                   </tr>
                   <tr class="border-b border-ink/5">
                     <td class="py-2 pr-4 font-mono text-xs">--model-size</td>
                     <td class="py-2 pr-4">small</td>
-                    <td class="py-2">tiny, base, small, medium, large</td>
+                    <td class="py-2">Model size for all variants: tiny, base, small, medium, large, auto</td>
                   </tr>
                   <tr class="border-b border-ink/5">
-                    <td class="py-2 pr-4 font-mono text-xs">--model-language</td>
-                    <td class="py-2 pr-4">auto</td>
-                    <td class="py-2">auto, en (English-only models)</td>
-                  </tr>
-                  <tr class="border-b border-ink/5">
-                    <td class="py-2 pr-4 font-mono text-xs">--language</td>
-                    <td class="py-2 pr-4">en</td>
-                    <td class="py-2">Transcription language code</td>
+                    <td class="py-2 pr-4 font-mono text-xs">--model-variants</td>
+                    <td class="py-2 pr-4">derived</td>
+                    <td class="py-2">Preload variants: en, multilingual, both</td>
                   </tr>
                   <tr class="border-b border-ink/5">
                     <td class="py-2 pr-4 font-mono text-xs">--device</td>
@@ -368,8 +389,12 @@ list_devices = false</code></pre>
                 <p class="text-xs text-ink/60 mt-1">Stop the daemon gracefully</p>
               </div>
               <div class="rounded-lg bg-ink/5 px-3 py-2">
-                <p class="font-mono text-sm text-ink">sv daemon set-model --size &lt;SIZE&gt; --model-language &lt;LANG&gt;</p>
-                <p class="text-xs text-ink/60 mt-1">Change model while daemon is running</p>
+                <p class="font-mono text-sm text-ink">sv daemon status</p>
+                <p class="text-xs text-ink/60 mt-1">Show daemon state and active language</p>
+              </div>
+              <div class="rounded-lg bg-ink/5 px-3 py-2">
+                <p class="font-mono text-sm text-ink">sv daemon set-language --lang &lt;CODE&gt;</p>
+                <p class="text-xs text-ink/60 mt-1">Switch active language without toggling recording</p>
               </div>
               <div class="rounded-lg bg-ink/5 px-3 py-2">
                 <p class="font-mono text-sm text-ink">sv (no arguments)</p>
@@ -387,32 +412,13 @@ list_devices = false</code></pre>
           Soundvibes uses Whisper models from HuggingFace. Models download automatically on first run, or you can download them manually.
         </p>
 
-        <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <div class="glass-card rounded-xl p-4">
-            <p class="text-xs font-semibold uppercase tracking-[0.2em] text-ink/50">tiny</p>
-            <p class="mt-2 font-semibold text-ink">Fastest, least accurate</p>
-            <p class="text-xs text-ink/60 mt-1">~39 MB • Good for testing</p>
-          </div>
-          <div class="glass-card rounded-xl p-4">
-            <p class="text-xs font-semibold uppercase tracking-[0.2em] text-ink/50">base</p>
-            <p class="mt-2 font-semibold text-ink">Fast with decent accuracy</p>
-            <p class="text-xs text-ink/60 mt-1">~74 MB • Balanced option</p>
-          </div>
-          <div class="glass-card rounded-xl p-4 border-2 border-mint/30">
-            <p class="text-xs font-semibold uppercase tracking-[0.2em] text-ink/50">small ⭐</p>
-            <p class="mt-2 font-semibold text-ink">Recommended default</p>
-            <p class="text-xs text-ink/60 mt-1">~244 MB • Best balance</p>
-          </div>
-          <div class="glass-card rounded-xl p-4">
-            <p class="text-xs font-semibold uppercase tracking-[0.2em] text-ink/50">medium</p>
-            <p class="mt-2 font-semibold text-ink">High accuracy</p>
-            <p class="text-xs text-ink/60 mt-1">~769 MB • Slower but better</p>
-          </div>
-          <div class="glass-card rounded-xl p-4">
-            <p class="text-xs font-semibold uppercase tracking-[0.2em] text-ink/50">large</p>
-            <p class="mt-2 font-semibold text-ink">Best accuracy</p>
-            <p class="text-xs text-ink/60 mt-1">~1.5 GB • Slowest, most accurate</p>
-          </div>
+        <div class="glass-card rounded-2xl p-5">
+          <p class="font-semibold text-ink mb-2">Current Model Policy</p>
+          <p class="text-sm text-ink/70">
+            Soundvibes uses one configured model size for all daemon language contexts.
+            Set <code class="font-mono">model_size</code> to choose tiny/base/small/medium/large,
+            then language-specific model variants are selected automatically and loaded from the local cache.
+          </p>
         </div>
 
         <div class="glass-card rounded-2xl p-5">
@@ -420,11 +426,15 @@ list_devices = false</code></pre>
           <ul class="space-y-2 text-sm text-ink/70">
             <li class="flex items-start gap-2">
               <span class="h-2 w-2 rounded-full bg-mint mt-1.5"></span>
-              <span><strong>auto</strong> (default): Multilingual models that support 99 languages. Slightly larger but more flexible.</span>
+              <span><strong>multilingual</strong>: Uses `ggml-&lt;size&gt;.bin` for all non-English languages (and English fallback).</span>
             </li>
             <li class="flex items-start gap-2">
               <span class="h-2 w-2 rounded-full bg-citrus mt-1.5"></span>
-              <span><strong>en</strong>: English-only models. Smaller and faster for English transcription, but cannot handle other languages.</span>
+              <span><strong>en</strong>: Uses `ggml-&lt;size&gt;.en.bin` for English-only transcription.</span>
+            </li>
+            <li class="flex items-start gap-2">
+              <span class="h-2 w-2 rounded-full bg-ink/40 mt-1.5"></span>
+              <span><strong>both</strong>: Preloads both variants so language switching has no first-use delay.</span>
             </li>
           </ul>
         </div>
@@ -436,6 +446,19 @@ list_devices = false</code></pre>
           </p>
           <p class="text-sm text-ink/70">
             You can override the download URL with the <code class="font-mono">SV_MODEL_BASE_URL</code> environment variable for custom mirrors or offline setups.
+          </p>
+        </div>
+
+        <div class="glass-card rounded-2xl p-5">
+          <p class="font-semibold text-ink mb-3">Per-Language Model Contexts</p>
+          <p class="text-sm text-ink/70 mb-3">
+            The daemon keeps model contexts by variant, while active language remains a runtime setting.
+            Use <code class="font-mono">model_variants = "both"</code> to preload both contexts, then switch instantly with
+            <code class="font-mono">sv daemon set-language --lang &lt;CODE&gt;</code>.
+          </p>
+          <p class="text-sm text-ink/70">
+            Model variant selection is automatic per language key. English uses the English-optimized
+            model variant, while other languages use multilingual variants.
           </p>
         </div>
       </section>
@@ -564,7 +587,8 @@ list_devices = false</code></pre>
       <section id="daemon-management" class="space-y-6">
         <h2 class="font-display text-2xl font-semibold text-ink">Daemon Management</h2>
         <p class="text-ink/70">
-          The daemon runs in the background, listening on a Unix socket for toggle commands. It handles audio capture, VAD processing, and transcription.
+          The daemon runs in the background, listening on a Unix socket for control commands.
+          It handles audio capture, VAD processing, transcription, and active language state.
         </p>
 
         <div class="space-y-4">
@@ -586,9 +610,25 @@ list_devices = false</code></pre>
                 <span class="text-xs text-ink/60">Graceful shutdown</span>
               </div>
               <div class="flex items-center justify-between rounded-lg bg-ink/5 px-3 py-2">
-                <code class="font-mono text-sm text-ink">sv daemon set-model --size medium</code>
-                <span class="text-xs text-ink/60">Change model on-the-fly</span>
+                <code class="font-mono text-sm text-ink">sv daemon status</code>
+                <span class="text-xs text-ink/60">Current state + language</span>
               </div>
+              <div class="flex items-center justify-between rounded-lg bg-ink/5 px-3 py-2">
+                <code class="font-mono text-sm text-ink">sv daemon set-language --lang fr</code>
+                <span class="text-xs text-ink/60">Switch active language</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="glass-card rounded-xl p-4">
+            <p class="font-semibold text-ink text-sm mb-2">Language-aware Hotkeys</p>
+            <p class="text-sm text-ink/70 mb-3">
+              You can keep your default toggle command and add dedicated per-language hotkeys.
+            </p>
+            <div class="space-y-2">
+              <code class="block rounded-lg bg-ink/5 px-3 py-2 font-mono text-sm text-ink/80">sv</code>
+              <code class="block rounded-lg bg-ink/5 px-3 py-2 font-mono text-sm text-ink/80">sv --toggle-language fr</code>
+              <code class="block rounded-lg bg-ink/5 px-3 py-2 font-mono text-sm text-ink/80">sv --toggle-language sv</code>
             </div>
           </div>
 
@@ -730,7 +770,7 @@ list_devices = false</code></pre>
               </div>
               <div class="rounded-lg bg-ink/5 px-3 py-2">
                 <p class="font-semibold text-sm text-ink">"Model file not found"</p>
-                <p class="text-xs text-ink/70 mt-1">Either enable auto-download: <code class="font-mono">download_model = true</code> or specify a valid path with <code class="font-mono">--model</code></p>
+                <p class="text-xs text-ink/70 mt-1">Enable auto-download with <code class="font-mono">download_model = true</code>, then restart the daemon so missing language models can be fetched</p>
               </div>
             </div>
           </div>
@@ -839,7 +879,7 @@ sv
             <ul class="space-y-2 text-sm text-ink/70">
               <li class="flex items-start gap-2">
                 <span class="h-2 w-2 rounded-full bg-citrus mt-1.5"></span>
-                <span>Try a larger model (medium or large) for better accuracy</span>
+                <span>Check microphone quality and reduce background noise for cleaner input</span>
               </li>
               <li class="flex items-start gap-2">
                 <span class="h-2 w-2 rounded-full bg-citrus mt-1.5"></span>
