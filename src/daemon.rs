@@ -24,7 +24,6 @@ use crate::whisper::WhisperContext;
 
 #[derive(Debug, Clone)]
 pub struct DaemonConfig {
-    pub model_path: Option<PathBuf>,
     pub download_model: bool,
     pub language: String,
     pub model_pool_languages: Vec<String>,
@@ -78,7 +77,11 @@ pub trait Transcriber {
 }
 
 pub trait TranscriberFactory {
-    fn load(&self, model_path: Option<&Path>) -> Result<Box<dyn Transcriber>, AppError>;
+    fn load(
+        &self,
+        spec: &ModelSpec,
+        allow_download: bool,
+    ) -> Result<Box<dyn Transcriber>, AppError>;
 }
 
 pub struct DaemonDeps {
@@ -121,18 +124,10 @@ pub fn select_audio_host(audio_host: AudioHost) -> Result<cpal::Host, AppError> 
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ControlEvent {
-    Toggle {
-        language: Option<String>,
-    },
+    Toggle { language: Option<String> },
     Status,
-    SetLanguage {
-        language: String,
-    },
+    SetLanguage { language: String },
     Stop,
-    SetModel {
-        size: ModelSize,
-        model_language: ModelLanguage,
-    },
     Error(String),
 }
 
@@ -222,16 +217,18 @@ impl ModelPool {
         config: &DaemonConfig,
         deps: &DaemonDeps,
     ) -> Result<(), AppError> {
+        let spec = ModelSpec::new(
+            ModelSize::Small,
+            model::model_language_for_transcription(language),
+        );
         let transcriber = deps
             .transcriber_factory
-            .load(config.model_path.as_deref())?;
-        let model_language =
-            model_language_token(model::model_language_for_transcription(language));
+            .load(&spec, config.download_model)?;
         self.set_entry(
             language,
             transcriber,
-            "configured".to_string(),
-            model_language.to_string(),
+            model_size_token(spec.size).to_string(),
+            model_language_token(spec.language).to_string(),
         );
         Ok(())
     }
@@ -414,76 +411,6 @@ pub fn run_daemon_loop(
                             if recording { "recording" } else { "idle" },
                             active_language.as_str(),
                         )
-                    }
-                    ControlEvent::SetModel {
-                        size,
-                        model_language,
-                    } => {
-                        if recording {
-                            recording = false;
-                            buffer.clear();
-                            capture = None;
-                            output.stdout("Recording stopped for model reload.");
-                            emit_daemon_event(
-                                event_sender,
-                                ipc::DaemonEventType::RecordingStopped {
-                                    language: active_language.clone(),
-                                },
-                            );
-                        }
-                        let spec = ModelSpec::new(size, model_language);
-                        match model::prepare_model(None, &spec, config.download_model) {
-                            Ok(prepared) => {
-                                if prepared.downloaded {
-                                    output.stdout("Model download complete.");
-                                }
-                                let new_path = prepared.path.clone();
-                                match deps.transcriber_factory.load(Some(&new_path)) {
-                                    Ok(new_transcriber) => {
-                                        model_pool.set_entry(
-                                            active_language.as_str(),
-                                            new_transcriber,
-                                            model_size_token(size).to_string(),
-                                            model_language_token(model_language).to_string(),
-                                        );
-                                        output.stdout(&format!(
-                                            "Model reloaded: size={}, model-language={}",
-                                            model_size_token(size),
-                                            model_language_token(model_language)
-                                        ));
-                                        emit_model_loaded_event(
-                                            event_sender,
-                                            &model_pool,
-                                            active_language.as_str(),
-                                        );
-                                        control_ok_response("idle", active_language.as_str())
-                                    }
-                                    Err(err) => {
-                                        output.stderr(&format!("Model reload failed: {err}"));
-                                        emit_daemon_event(
-                                            event_sender,
-                                            ipc::DaemonEventType::Error {
-                                                message: err.to_string(),
-                                            },
-                                        );
-                                        control_error_response(
-                                            "model_reload_failed",
-                                            err.to_string(),
-                                        )
-                                    }
-                                }
-                            }
-                            Err(err) => {
-                                output.stderr(&format!("Model reload failed: {err}"));
-                                emit_daemon_event(
-                                    event_sender,
-                                    ipc::DaemonEventType::Error {
-                                        message: err.to_string(),
-                                    },
-                                );
-                                control_error_response("model_reload_failed", err.to_string())
-                            }
-                        }
                     }
                     ControlEvent::Error(error_message) => {
                         emit_daemon_event(
@@ -937,57 +864,7 @@ pub fn start_socket_listener(
     Ok((guard, receiver))
 }
 
-fn parse_set_model_command(command: &str) -> Result<(ModelSize, ModelLanguage), String> {
-    let mut size = None;
-    let mut model_language = None;
-    for token in command.split_whitespace().skip(1) {
-        if let Some(value) = token.strip_prefix("size=") {
-            size = Some(parse_model_size(value).ok_or_else(|| {
-                format!("invalid model size '{value}' (expected auto|tiny|base|small|medium|large)")
-            })?);
-        } else if let Some(value) = token.strip_prefix("model-language=") {
-            model_language =
-                Some(parse_model_language(value).ok_or_else(|| {
-                    format!("invalid model language '{value}' (expected auto|en)")
-                })?);
-        }
-    }
-
-    let size = size.ok_or_else(|| "missing size=<SIZE>".to_string())?;
-    let model_language =
-        model_language.ok_or_else(|| "missing model-language=<LANG>".to_string())?;
-    Ok((size, model_language))
-}
-
-fn parse_model_size(value: &str) -> Option<ModelSize> {
-    match value {
-        "auto" => Some(ModelSize::Auto),
-        "tiny" => Some(ModelSize::Tiny),
-        "base" => Some(ModelSize::Base),
-        "small" => Some(ModelSize::Small),
-        "medium" => Some(ModelSize::Medium),
-        "large" => Some(ModelSize::Large),
-        _ => None,
-    }
-}
-
-fn parse_model_language(value: &str) -> Option<ModelLanguage> {
-    match value {
-        "auto" => Some(ModelLanguage::Auto),
-        "en" => Some(ModelLanguage::En),
-        _ => None,
-    }
-}
-
 fn control_event_from_command(command: &str) -> Result<ControlEvent, String> {
-    if command.starts_with("set-model") {
-        let (size, model_language) = parse_set_model_command(command)?;
-        return Ok(ControlEvent::SetModel {
-            size,
-            model_language,
-        });
-    }
-
     let request = ipc::parse_control_request(command)?;
     match request.command {
         ipc::ControlCommand::Toggle { lang } => Ok(ControlEvent::Toggle { language: lang }),
@@ -1039,18 +916,6 @@ pub fn send_set_language_command(language: &str) -> Result<ipc::ControlResponse,
 
 pub fn send_stop_command() -> Result<ipc::ControlResponse, AppError> {
     send_daemon_command("stop")
-}
-
-pub fn send_set_model_command(
-    size: ModelSize,
-    model_language: ModelLanguage,
-) -> Result<ipc::ControlResponse, AppError> {
-    let command = format!(
-        "set-model size={} model-language={}",
-        model_size_token(size),
-        model_language_token(model_language)
-    );
-    send_daemon_command(&command)
 }
 
 fn send_daemon_command(command: &str) -> Result<ipc::ControlResponse, AppError> {
@@ -1147,9 +1012,14 @@ impl CaptureSource for CpalCapture {
 struct WhisperFactory;
 
 impl TranscriberFactory for WhisperFactory {
-    fn load(&self, model_path: Option<&Path>) -> Result<Box<dyn Transcriber>, AppError> {
-        let model_path = model_path.ok_or_else(|| AppError::config("model path is required"))?;
-        let context = WhisperContext::from_file(model_path)
+    fn load(
+        &self,
+        spec: &ModelSpec,
+        allow_download: bool,
+    ) -> Result<Box<dyn Transcriber>, AppError> {
+        let prepared = model::prepare_model(None, spec, allow_download)?;
+        let model_path = prepared.path;
+        let context = WhisperContext::from_file(&model_path)
             .map_err(|err| AppError::runtime(err.to_string()))?;
         Ok(Box::new(WhisperTranscriber { context }))
     }
@@ -1170,7 +1040,6 @@ impl Transcriber for WhisperTranscriber {
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support {
     use std::collections::VecDeque;
-    use std::path::{Path, PathBuf};
     use std::sync::mpsc;
     use std::sync::{Arc, Mutex};
 
@@ -1180,6 +1049,7 @@ pub mod test_support {
     };
     use crate::audio::{AudioError, AudioErrorKind};
     use crate::error::AppError;
+    use crate::model::ModelSpec;
 
     #[derive(Default)]
     pub struct TestOutput {
@@ -1284,7 +1154,7 @@ pub mod test_support {
     #[derive(Clone)]
     pub struct TestTranscriberFactory {
         responses: Arc<Mutex<VecDeque<Result<String, AppError>>>>,
-        loaded_paths: Arc<Mutex<Vec<Option<PathBuf>>>>,
+        loaded_specs: Arc<Mutex<Vec<(ModelSpec, bool)>>>,
         transcribe_languages: Arc<Mutex<Vec<Option<String>>>>,
     }
 
@@ -1293,7 +1163,7 @@ pub mod test_support {
             let responses = responses.into_iter().map(Ok).collect();
             Self {
                 responses: Arc::new(Mutex::new(responses)),
-                loaded_paths: Arc::new(Mutex::new(Vec::new())),
+                loaded_specs: Arc::new(Mutex::new(Vec::new())),
                 transcribe_languages: Arc::new(Mutex::new(Vec::new())),
             }
         }
@@ -1301,13 +1171,13 @@ pub mod test_support {
         pub fn with_results(responses: Vec<Result<String, AppError>>) -> Self {
             Self {
                 responses: Arc::new(Mutex::new(responses.into())),
-                loaded_paths: Arc::new(Mutex::new(Vec::new())),
+                loaded_specs: Arc::new(Mutex::new(Vec::new())),
                 transcribe_languages: Arc::new(Mutex::new(Vec::new())),
             }
         }
 
         pub fn load_count(&self) -> usize {
-            self.loaded_paths.lock().expect("loaded paths lock").len()
+            self.loaded_specs.lock().expect("loaded specs lock").len()
         }
 
         pub fn transcribed_languages(&self) -> Vec<Option<String>> {
@@ -1319,11 +1189,15 @@ pub mod test_support {
     }
 
     impl TranscriberFactory for TestTranscriberFactory {
-        fn load(&self, model_path: Option<&Path>) -> Result<Box<dyn Transcriber>, AppError> {
-            self.loaded_paths
+        fn load(
+            &self,
+            spec: &ModelSpec,
+            allow_download: bool,
+        ) -> Result<Box<dyn Transcriber>, AppError> {
+            self.loaded_specs
                 .lock()
-                .expect("loaded paths lock")
-                .push(model_path.map(Path::to_path_buf));
+                .expect("loaded specs lock")
+                .push((*spec, allow_download));
             Ok(Box::new(TestTranscriber {
                 responses: Arc::clone(&self.responses),
                 transcribe_languages: Arc::clone(&self.transcribe_languages),
@@ -1472,7 +1346,6 @@ mod tests {
             transcriber_factory: Box::new(TestTranscriberFactory::new(vec!["hello".to_string()])),
         };
         let config = DaemonConfig {
-            model_path: None,
             download_model: false,
             language: "en".to_string(),
             model_pool_languages: vec!["en".to_string()],
@@ -1528,7 +1401,6 @@ mod tests {
             transcriber_factory: Box::new(TestTranscriberFactory::new(vec!["hello".to_string()])),
         };
         let config = DaemonConfig {
-            model_path: None,
             download_model: false,
             language: "en".to_string(),
             model_pool_languages: vec!["en".to_string()],
@@ -1715,7 +1587,6 @@ mod tests {
             transcriber_factory: Box::new(transcriber_factory.clone()),
         };
         let config = DaemonConfig {
-            model_path: None,
             download_model: false,
             language: "sv".to_string(),
             model_pool_languages: vec!["en".to_string(), "fr".to_string()],
@@ -1757,7 +1628,6 @@ mod tests {
             transcriber_factory: Box::new(transcriber_factory.clone()),
         };
         let config = DaemonConfig {
-            model_path: None,
             download_model: false,
             language: "en".to_string(),
             model_pool_languages: vec!["en".to_string(), "fr".to_string()],
@@ -1813,7 +1683,6 @@ mod tests {
             transcriber_factory: Box::new(transcriber_factory.clone()),
         };
         let config = DaemonConfig {
-            model_path: None,
             download_model: false,
             language: "en".to_string(),
             model_pool_languages: vec!["en".to_string()],
@@ -1852,22 +1721,6 @@ mod tests {
             vec![Some("sv".to_string())]
         );
         Ok(())
-    }
-
-    #[test]
-    fn parses_set_model_command_tokens() {
-        let (size, model_language) =
-            parse_set_model_command("set-model size=small model-language=en")
-                .expect("expected parse success");
-        assert_eq!(size, ModelSize::Small);
-        assert_eq!(model_language, ModelLanguage::En);
-    }
-
-    #[test]
-    fn rejects_set_model_command_missing_language() {
-        let err =
-            parse_set_model_command("set-model size=small").expect_err("expected parse error");
-        assert!(err.contains("model-language"));
     }
 
     #[test]

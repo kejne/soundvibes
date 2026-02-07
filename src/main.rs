@@ -8,21 +8,11 @@ use std::process;
 use sv::audio;
 use sv::daemon;
 use sv::error::AppError;
-use sv::model::{model_language_for_transcription, ModelLanguage, ModelSize, ModelSpec};
 use sv::types::{AudioHost, OutputFormat, OutputMode, VadMode, VadSetting};
 
 #[derive(Parser, Debug, Clone)]
 #[command(name = "sv", version, about = "Offline speech-to-text CLI")]
 struct Cli {
-    #[arg(long, value_name = "PATH", global = true)]
-    model: Option<PathBuf>,
-
-    #[arg(long, default_value = "small", value_name = "SIZE", global = true)]
-    model_size: ModelSize,
-
-    #[arg(long, default_value = "auto", value_name = "LANG", global = true)]
-    model_language: ModelLanguage,
-
     #[arg(long, default_value = "en", value_name = "CODE", global = true)]
     language: String,
 
@@ -108,13 +98,6 @@ enum DaemonCommand {
         #[arg(long = "lang", value_name = "CODE")]
         lang: String,
     },
-    #[command(name = "set-model")]
-    SetModel {
-        #[arg(long, value_name = "SIZE")]
-        size: ModelSize,
-        #[arg(long, value_name = "LANG")]
-        model_language: ModelLanguage,
-    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -123,13 +106,7 @@ enum CliMode {
     RunDaemon,
     StatusDaemon,
     StopDaemon,
-    SetLanguage {
-        language: String,
-    },
-    SetModel {
-        size: ModelSize,
-        model_language: ModelLanguage,
-    },
+    SetLanguage { language: String },
     ListDevices,
 }
 
@@ -149,16 +126,6 @@ fn resolve_cli_mode(cli: &Cli) -> CliMode {
         }) => CliMode::SetLanguage {
             language: lang.clone(),
         },
-        Some(CliCommand::Daemon {
-            command:
-                DaemonCommand::SetModel {
-                    size,
-                    model_language,
-                },
-        }) => CliMode::SetModel {
-            size,
-            model_language,
-        },
         None => {
             if cli.list_devices {
                 CliMode::ListDevices
@@ -171,9 +138,6 @@ fn resolve_cli_mode(cli: &Cli) -> CliMode {
 
 #[derive(Debug, Clone)]
 struct Config {
-    model_path: Option<PathBuf>,
-    model_size: ModelSize,
-    model_language: ModelLanguage,
     download_model: bool,
     language: String,
     toggle_language: Option<String>,
@@ -215,26 +179,6 @@ impl Config {
             vec![language.clone()]
         } else {
             model_pool_languages
-        };
-
-        let model_size = if matches.value_source("model_size") == Some(ValueSource::CommandLine) {
-            cli.model_size
-        } else {
-            file.model_size.unwrap_or(cli.model_size)
-        };
-
-        let (model_language, model_language_explicit) =
-            if matches.value_source("model_language") == Some(ValueSource::CommandLine) {
-                (cli.model_language, true)
-            } else if let Some(model_language) = file.model_language {
-                (model_language, true)
-            } else {
-                (cli.model_language, false)
-            };
-        let model_language = if model_language_explicit {
-            model_language
-        } else {
-            model_language_for_transcription(&language)
         };
 
         let device = if matches.value_source("device") == Some(ValueSource::CommandLine) {
@@ -329,17 +273,7 @@ impl Config {
                 file.download_model.unwrap_or(cli.download_model)
             };
 
-        let file_model_path = file.model_path.or(file.model);
-        let model_path = if matches.value_source("model") == Some(ValueSource::CommandLine) {
-            cli.model
-        } else {
-            cli.model.or(file_model_path)
-        };
-
         Self {
-            model_path,
-            model_size,
-            model_language,
             download_model,
             language,
             toggle_language,
@@ -364,10 +298,6 @@ impl Config {
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct FileConfig {
-    model: Option<PathBuf>,
-    model_path: Option<PathBuf>,
-    model_size: Option<ModelSize>,
-    model_language: Option<ModelLanguage>,
     download_model: Option<bool>,
     language: Option<String>,
     model_pool_languages: Option<Vec<String>>,
@@ -422,16 +352,6 @@ fn main() {
             }
             return;
         }
-        CliMode::SetModel {
-            size,
-            model_language,
-        } => {
-            if let Err(err) = daemon::send_set_model_command(*size, *model_language) {
-                eprintln!("error: {err}");
-                process::exit(err.exit_code());
-            }
-            return;
-        }
         CliMode::Toggle | CliMode::RunDaemon | CliMode::ListDevices => {}
     }
 
@@ -457,36 +377,14 @@ fn main() {
             return;
         }
         CliMode::RunDaemon | CliMode::ListDevices => {}
-        CliMode::StatusDaemon
-        | CliMode::StopDaemon
-        | CliMode::SetLanguage { .. }
-        | CliMode::SetModel { .. } => unreachable!(),
+        CliMode::StatusDaemon | CliMode::StopDaemon | CliMode::SetLanguage { .. } => unreachable!(),
     }
 
     if mode == CliMode::RunDaemon {
         config.list_devices = false;
     }
 
-    let prepared_model = if config.list_devices {
-        None
-    } else {
-        let spec = ModelSpec::new(config.model_size, config.model_language);
-        match sv::model::prepare_model(config.model_path.as_deref(), &spec, config.download_model) {
-            Ok(prepared) => Some(prepared),
-            Err(err) => {
-                eprintln!("error: {err}");
-                process::exit(err.exit_code());
-            }
-        }
-    };
-
     println!("SoundVibes sv {}", env!("CARGO_PKG_VERSION"));
-    if let Some(prepared) = &prepared_model {
-        if prepared.downloaded {
-            println!("Model download complete.");
-        }
-        println!("Model: {}", prepared.path.display());
-    }
     println!("Language: {}", config.language);
     println!(
         "Model pool languages: {}",
@@ -508,11 +406,7 @@ fn main() {
     let result = if config.list_devices {
         run_list_devices(&config)
     } else {
-        let model_path = prepared_model
-            .as_ref()
-            .map(|prepared| prepared.path.clone());
         let daemon_config = daemon::DaemonConfig {
-            model_path,
             download_model: config.download_model,
             language: config.language.clone(),
             model_pool_languages: config.model_pool_languages.clone(),
@@ -790,27 +684,6 @@ mod tests {
             resolve_cli_mode(&cli),
             CliMode::SetLanguage {
                 language: "fr".to_string(),
-            }
-        );
-    }
-
-    #[test]
-    fn parses_daemon_set_model_subcommand() {
-        let cli = Cli::try_parse_from([
-            "sv",
-            "daemon",
-            "set-model",
-            "--size",
-            "small",
-            "--model-language",
-            "en",
-        ])
-        .expect("failed to parse cli");
-        assert_eq!(
-            resolve_cli_mode(&cli),
-            CliMode::SetModel {
-                size: ModelSize::Small,
-                model_language: ModelLanguage::En,
             }
         );
     }

@@ -379,9 +379,8 @@ create_config() {
 # Documentation: https://github.com/kejne/soundvibes#configuration
 
 # Model settings
-model_size = "small"        # Options: tiny, base, small, medium, large, auto
-model_language = "auto"     # Options: auto, en
 download_model = true       # Auto-download missing models
+model_pool_languages = ["en", "sv", "fr"]  # Optional preload set
 
 # Audio settings
 device = "default"          # Audio input device name
@@ -391,7 +390,7 @@ sample_rate = 16000         # Hz
 # Output settings
 format = "plain"            # Options: plain, jsonl
 mode = "stdout"             # Options: stdout, inject
-language = "en"             # Transcription language
+language = "en"             # Default active language
 
 # VAD (Voice Activity Detection) settings
 vad = "on"                  # Options: on, off

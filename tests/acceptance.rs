@@ -54,10 +54,7 @@ fn at01_daemon_starts_with_valid_model() -> Result<(), Box<dyn Error>> {
 
     let config_home = temp_dir("soundvibes-acceptance-config");
     let runtime_dir = temp_dir("soundvibes-acceptance-runtime");
-    write_config(
-        &config_home,
-        &format!("model = \"{}\"\n", model_path.display()),
-    )?;
+    write_config(&config_home, "language = \"en\"\ndownload_model = false\n")?;
 
     let binary = env!("CARGO_BIN_EXE_sv");
     let mut child = Command::new(binary)
@@ -129,14 +126,9 @@ fn at01b_language_selects_model_variant() -> Result<(), Box<dyn Error>> {
 fn at02_missing_model_returns_exit_code_2() -> Result<(), Box<dyn Error>> {
     let config_home = temp_dir("soundvibes-acceptance-config");
     let runtime_dir = temp_dir("soundvibes-acceptance-runtime");
-    let missing_path = temp_dir("soundvibes-missing-model").join("missing.bin");
-    write_config(
-        &config_home,
-        &format!(
-            "model = \"{}\"\ndownload_model = false\n",
-            missing_path.display()
-        ),
-    )?;
+    let data_home = temp_dir("soundvibes-acceptance-data");
+    let _data_guard = EnvGuard::set("XDG_DATA_HOME", &data_home);
+    write_config(&config_home, "download_model = false\n")?;
 
     let binary = env!("CARGO_BIN_EXE_sv");
     let output = Command::new(binary)
@@ -175,10 +167,7 @@ fn at03_invalid_input_device_returns_exit_code_3() -> Result<(), Box<dyn Error>>
     let runtime_dir = temp_dir("soundvibes-acceptance-runtime");
     write_config(
         &config_home,
-        &format!(
-            "model = \"{}\"\ndevice = \"nonexistent\"\n",
-            model_path.display()
-        ),
+        "language = \"en\"\ndownload_model = false\ndevice = \"nonexistent\"\n",
     )?;
 
     let binary = env!("CARGO_BIN_EXE_sv");
@@ -213,7 +202,6 @@ fn at04_daemon_toggle_captures_and_transcribes() -> Result<(), Box<dyn Error>> {
         transcriber_factory: Box::new(TestTranscriberFactory::new(vec!["hello".to_string()])),
     };
     let config = DaemonConfig {
-        model_path: None,
         download_model: false,
         language: "en".to_string(),
         model_pool_languages: vec!["en".to_string()],
@@ -275,7 +263,6 @@ fn at05_jsonl_output_formatting() -> Result<(), Box<dyn Error>> {
         transcriber_factory: Box::new(TestTranscriberFactory::new(vec!["hello".to_string()])),
     };
     let config = DaemonConfig {
-        model_path: None,
         download_model: false,
         language: "en".to_string(),
         model_pool_languages: vec!["en".to_string()],
@@ -349,10 +336,7 @@ fn at06_offline_operation() -> Result<(), Box<dyn Error>> {
 
     let config_home = temp_dir("soundvibes-acceptance-config");
     let runtime_dir = temp_dir("soundvibes-acceptance-runtime");
-    write_config(
-        &config_home,
-        &format!("model = \"{}\"\n", model_path.display()),
-    )?;
+    write_config(&config_home, "language = \"en\"\ndownload_model = false\n")?;
 
     let binary = env!("CARGO_BIN_EXE_sv");
     let mut child = Command::new(binary)
@@ -401,10 +385,7 @@ fn at07_gpu_auto_select() -> Result<(), Box<dyn Error>> {
 
     let config_home = temp_dir("soundvibes-acceptance-config");
     let runtime_dir = temp_dir("soundvibes-acceptance-runtime");
-    write_config(
-        &config_home,
-        &format!("model = \"{}\"\n", model_path.display()),
-    )?;
+    write_config(&config_home, "language = \"en\"\ndownload_model = false\n")?;
 
     let stderr_lines = run_daemon_for_logs(&config_home, &runtime_dir)?;
     let stderr_joined = stderr_lines.join("\n");
@@ -435,10 +416,7 @@ fn at07_cpu_fallback() -> Result<(), Box<dyn Error>> {
 
     let config_home = temp_dir("soundvibes-acceptance-config");
     let runtime_dir = temp_dir("soundvibes-acceptance-runtime");
-    write_config(
-        &config_home,
-        &format!("model = \"{}\"\n", model_path.display()),
-    )?;
+    write_config(&config_home, "language = \"en\"\ndownload_model = false\n")?;
 
     let stderr_lines = run_daemon_for_logs(&config_home, &runtime_dir)?;
     let stderr_joined = stderr_lines.join("\n");
@@ -730,7 +708,6 @@ fn at12_control_socket_toggle_with_language_and_status_response() -> Result<(), 
         transcriber_factory: Box::new(TestTranscriberFactory::new(vec!["hello".to_string()])),
     };
     let config = DaemonConfig {
-        model_path: None,
         download_model: false,
         language: "en".to_string(),
         model_pool_languages: vec!["en".to_string(), "fr".to_string()],
@@ -808,7 +785,6 @@ fn at13_events_socket_fans_out_to_multiple_clients() -> Result<(), Box<dyn Error
         transcriber_factory: Box::new(TestTranscriberFactory::new(vec!["hello".to_string()])),
     };
     let config = DaemonConfig {
-        model_path: None,
         download_model: false,
         language: "en".to_string(),
         model_pool_languages: vec!["en".to_string(), "fr".to_string()],
@@ -909,7 +885,6 @@ fn at14_set_language_switches_active_language_and_transcript_language() -> Resul
         transcriber_factory: Box::new(TestTranscriberFactory::new(vec!["hej".to_string()])),
     };
     let config = DaemonConfig {
-        model_path: None,
         download_model: false,
         language: "en".to_string(),
         model_pool_languages: vec!["en".to_string(), "sv".to_string()],
@@ -1133,9 +1108,6 @@ fn assert_install_success(output: &std::process::Output, context: &str) {
 }
 
 fn model_path() -> Result<PathBuf, Box<dyn Error>> {
-    if let Ok(path) = env::var("SV_MODEL_PATH") {
-        return Ok(PathBuf::from(path));
-    }
     let data_home = env::var("XDG_DATA_HOME")
         .map(PathBuf::from)
         .or_else(|_| env::var("HOME").map(|home| PathBuf::from(home).join(".local/share")))
@@ -1143,7 +1115,7 @@ fn model_path() -> Result<PathBuf, Box<dyn Error>> {
     Ok(data_home
         .join("soundvibes")
         .join("models")
-        .join("ggml-base.en.bin"))
+        .join("ggml-small.en.bin"))
 }
 
 fn temp_dir(prefix: &str) -> PathBuf {
