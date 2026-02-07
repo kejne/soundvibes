@@ -213,6 +213,7 @@ import BaseLayout from "../layouts/BaseLayout.astro";
           <p class="text-xs font-semibold uppercase tracking-[0.2em] text-ink/50 mb-3">Complete Example</p>
           <pre class="rounded-lg bg-ink/5 px-4 py-3 font-mono text-xs text-ink/80 overflow-x-auto"><code># Model behavior
 download_model = true          # Allow auto-download on first run
+model_size = "small"           # tiny, base, small, medium, large, auto
 
 # Transcription settings
 language = "en"                # Default active language context
@@ -302,6 +303,11 @@ list_devices = false</code></pre>
                     <td class="py-2 pr-4 font-mono text-xs">--download-model</td>
                     <td class="py-2 pr-4">true</td>
                     <td class="py-2">Allow downloading missing models automatically</td>
+                  </tr>
+                  <tr class="border-b border-ink/5">
+                    <td class="py-2 pr-4 font-mono text-xs">--model-size</td>
+                    <td class="py-2 pr-4">small</td>
+                    <td class="py-2">Model size for all pool languages: tiny, base, small, medium, large, auto</td>
                   </tr>
                   <tr class="border-b border-ink/5">
                     <td class="py-2 pr-4 font-mono text-xs">--device</td>
@@ -401,8 +407,9 @@ list_devices = false</code></pre>
         <div class="glass-card rounded-2xl p-5">
           <p class="font-semibold text-ink mb-2">Current Model Policy</p>
           <p class="text-sm text-ink/70">
-            Soundvibes currently uses the small Whisper model family for daemon language contexts.
-            Model files are selected automatically based on active language and loaded from the local model cache.
+            Soundvibes uses one configured model size for all daemon language contexts.
+            Set <code class="font-mono">model_size</code> to choose tiny/base/small/medium/large,
+            then language-specific model variants are selected automatically and loaded from the local cache.
           </p>
         </div>
 

@@ -29,6 +29,7 @@ This document describes the technical design for the `sv` CLI that performs offl
 - Configuration struct shared across pipeline components.
 - Add `mode` to select `stdout` (default) or `inject` for daemon output.
 - Config supports `model_pool_languages` to preload language contexts while keeping `language` as the default active context.
+- Config supports `model_size` as a single size setting applied across all language contexts.
 - Model selection is automatic per language context (English-optimized for `en`, multilingual otherwise).
 
 ### Audio Capture
@@ -71,7 +72,7 @@ This document describes the technical design for the `sv` CLI that performs offl
 
 ### Model Download
 - On `sv`/`sv daemon start` startup, check for the configured model in the default data directory.
-- Download the ggml model if missing using the automatic per-language variant (small model family).
+- Download the ggml model if missing using the configured `model_size` plus automatic per-language variant.
 - Store models in the default XDG data directory and reuse them across daemon restarts.
 
 ### GPU Backend Selection
@@ -98,7 +99,7 @@ This document describes the technical design for the `sv` CLI that performs offl
 
 ## Configuration
 - Format: TOML.
-- Example fields: `download_model`, `language`, `model_pool_languages`, `device`, `sample_rate`, `format`, `vad`, `mode`.
+- Example fields: `download_model`, `model_size`, `language`, `model_pool_languages`, `device`, `sample_rate`, `format`, `vad`, `mode`.
 
 ## Data Flow
 1. CLI loads config and model.
