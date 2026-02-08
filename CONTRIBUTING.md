@@ -69,6 +69,9 @@ cargo build
 
 Acceptance criteria live in `docs/acceptance-tests.md` and must map to tests in `tests/acceptance.rs`.
 
+## Plugins and IPC
+External plugins (any language) should use the daemon IPC API documented in `docs/daemon-ipc-api.md`. This document describes the control socket commands and the events socket JSONL stream that plugins can subscribe to.
+
 ## Linting and Formatting
 - Format: `cargo fmt`
 - Lint: `cargo clippy --all-targets --all-features`
