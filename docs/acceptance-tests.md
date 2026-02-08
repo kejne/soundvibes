@@ -20,25 +20,25 @@ These tests validate the product behavior for the offline Linux CLI.
 ## Tests
 
 ### AT-01: CLI starts with valid model
-- Setup: set `model` in config to `${XDG_DATA_HOME:-~/.local/share}/soundvibes/models/ggml-base.en.bin`.
+- Setup: ensure default model files exist under `${XDG_DATA_HOME:-~/.local/share}/soundvibes/models/`.
 - Command: `sv daemon start`
 - Expect: process starts, listens on socket, no error output.
 - Pass: exit code is `0` after user stops the process.
 
 ### AT-01a: Missing model is auto-downloaded
-- Setup: remove `${XDG_DATA_HOME:-~/.local/share}/soundvibes/models/ggml-small.bin`, set `model_size` to `small` and `model_language` to `auto`.
+- Setup: remove `${XDG_DATA_HOME:-~/.local/share}/soundvibes/models/ggml-small.bin` and keep `download_model = true`.
 - Command: `sv daemon start`
 - Expect: model download occurs before startup completes.
 - Pass: model file exists at the default location and daemon starts.
 
 ### AT-01b: Language selects model variant
-- Setup: set `language = "en"` without `model_language`.
+- Setup: set `language = "en"`.
 - Command: `sv daemon start`
 - Expect: model download uses the `.en` variant.
-- Pass: model file path resolves to `ggml-<size>.en.bin` when language is `en` and `model_language` is unset.
+- Pass: model file path resolves to `ggml-small.en.bin` when language is `en`.
 
 ### AT-02: Missing model returns error
-- Setup: set `model` in config to `${XDG_DATA_HOME:-~/.local/share}/soundvibes/models/missing.bin` and set `download_model = false`.
+- Setup: set `download_model = false` and ensure required default model files are absent.
 - Command: `sv daemon start`
 - Expect: error message indicating missing model.
 - Pass: exit code is `2`.
@@ -50,7 +50,7 @@ These tests validate the product behavior for the offline Linux CLI.
 - Pass: exit code is `3`.
 
 ### AT-04: Daemon toggle capture
-- Setup: set `model` in config to `${XDG_DATA_HOME:-~/.local/share}/soundvibes/models/ggml-base.en.bin`.
+- Setup: ensure required default model file is available.
 - Command: `sv daemon start` in one terminal, `sv` to toggle on, then `sv` to toggle off.
 - Action: speak a short sentence while capture is toggled on.
 - Expect: final transcript is printed after toggling off.
@@ -110,3 +110,26 @@ These tests validate the product behavior for the offline Linux CLI.
 - Command: `cargo test --test acceptance -- at11b_installer_rejects_unsupported_platform`.
 - Expect: installer exits non-zero with a clear unsupported-platform error.
 - Pass: test exits non-zero and stderr includes `SoundVibes only supports Linux`.
+### AT-12: Plain toggle uses configured default language
+- Setup: set `language = "sv"` in config.
+- Command: run plain `sv` with no additional arguments.
+- Expect: client sends `toggle lang=sv` to the control socket.
+- Pass: control socket receives exactly `toggle lang=sv`.
+
+### AT-12a: Control socket toggle + status JSON responses
+- Setup: daemon running with test-support mocks.
+- Command: send `toggle lang=fr`, then `status` over the control socket.
+- Expect: both responses are valid JSON with `ok`, `state`, and `language`.
+- Pass: toggle response reports `recording` in `fr`, and status reports the same state/language.
+
+### AT-13: Events socket fan-out to multiple subscribers
+- Setup: daemon running with test-support mocks and two subscribers connected to `sv-events.sock`.
+- Command: send `toggle lang=fr`, then toggle off, then stop.
+- Expect: both subscribers receive the same ordered event stream including `daemon_ready`, `model_loaded`, `recording_started`, `transcript_final`, and `recording_stopped`.
+- Pass: both subscriber streams are identical and contain the expected event types.
+
+### AT-14: Set-language switches active model context
+- Setup: daemon running with test-support mocks, `model_variants = "both"`, and one events subscriber connected.
+- Command: send `set-language lang=sv`, then `status`, then toggle on/off.
+- Expect: control responses report active language `sv`, `model_loaded` is emitted for `sv`, and `transcript_final` includes `language="sv"`.
+- Pass: command responses and event payloads consistently reference `sv`.

@@ -83,7 +83,7 @@ This PRD is a living document and should be updated as product requirements and 
 - Load config from XDG base directory if available.
 - Default path: `${XDG_CONFIG_HOME:-~/.config}/soundvibes/config.toml`.
 - Config file format: TOML.
-- Config keys: `model`, `model_path`, `model_size`, `model_language`, `download_model`, `language`, `device`, `sample_rate`, `format`, `vad`, `mode`.
+- Config keys: `download_model`, `model_size`, `model_variants`, `language`, `device`, `sample_rate`, `format`, `vad`, `mode`.
 
 ## Validation Plan
 - Manual test on Linux laptop with default microphone.
@@ -97,6 +97,6 @@ This PRD is a living document and should be updated as product requirements and 
 - CPU performance too slow: use smaller quantized model and VAD.
 - Missing GPU runtime: fall back to CPU and document GPU prerequisites.
 - Audio capture issues on some devices: provide device selection flag.
-- Model size too large: allow user to swap model via CLI flag.
+- Model download/storage overhead: preload only required variants via `model_variants` (`en`, `multilingual`, `both`).
 - Daemon not running: surface an actionable error from the CLI toggle.
 - Text injection permissions vary by compositor: document portal prompts and limitations.

@@ -1,9 +1,11 @@
 use chrono::{Local, Utc};
 use signal_hook::consts::signal::{SIGINT, SIGTERM};
 use signal_hook::flag;
+use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::io::{Read, Write};
+use std::net::Shutdown;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -14,14 +16,16 @@ use std::time::Duration;
 
 use crate::audio;
 use crate::error::AppError;
-use crate::model::{self, ModelLanguage, ModelSize, ModelSpec};
+use crate::ipc;
+use crate::model::{self, ModelLanguage, ModelSize, ModelSpec, ModelVariants};
 use crate::output;
 use crate::types::{AudioHost, OutputFormat, OutputMode, VadMode};
 use crate::whisper::WhisperContext;
 
 #[derive(Debug, Clone)]
 pub struct DaemonConfig {
-    pub model_path: Option<PathBuf>,
+    pub model_size: ModelSize,
+    pub model_variants: ModelVariants,
     pub download_model: bool,
     pub language: String,
     pub device: Option<String>,
@@ -74,7 +78,11 @@ pub trait Transcriber {
 }
 
 pub trait TranscriberFactory {
-    fn load(&self, model_path: Option<&Path>) -> Result<Box<dyn Transcriber>, AppError>;
+    fn load(
+        &self,
+        spec: &ModelSpec,
+        allow_download: bool,
+    ) -> Result<Box<dyn Transcriber>, AppError>;
 }
 
 pub struct DaemonDeps {
@@ -117,13 +125,128 @@ pub fn select_audio_host(audio_host: AudioHost) -> Result<cpal::Host, AppError> 
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ControlEvent {
-    Toggle,
+    Toggle { language: Option<String> },
+    Status,
+    SetLanguage { language: String },
     Stop,
-    SetModel {
-        size: ModelSize,
-        model_language: ModelLanguage,
-    },
     Error(String),
+}
+
+pub struct ControlMessage {
+    pub event: ControlEvent,
+    pub response: Option<mpsc::Sender<ipc::ControlResponse>>,
+}
+
+struct ModelPoolEntry {
+    transcriber: Box<dyn Transcriber>,
+    model_size: String,
+    model_language: String,
+}
+
+struct ModelPool {
+    entries: HashMap<ModelLanguage, ModelPoolEntry>,
+}
+
+impl ModelPool {
+    fn preload(config: &DaemonConfig, deps: &DaemonDeps) -> Result<Self, AppError> {
+        let mut pool = Self {
+            entries: HashMap::new(),
+        };
+
+        for &model_language in config.model_variants.preload() {
+            pool.load_variant(model_language, config, deps)?;
+        }
+
+        let active_language = normalize_language(&config.language);
+        let _ = pool.resolve_language(&active_language, config, deps)?;
+
+        Ok(pool)
+    }
+
+    fn resolve_language(
+        &mut self,
+        language: &str,
+        config: &DaemonConfig,
+        deps: &DaemonDeps,
+    ) -> Result<ModelLanguage, AppError> {
+        let preferred = model::model_language_for_transcription(language);
+        let selected = self
+            .select_variant(preferred, config.model_variants)
+            .ok_or_else(|| {
+                AppError::config(format!(
+                    "no compatible model variant configured for language '{language}'"
+                ))
+            })?;
+
+        if !self.entries.contains_key(&selected) {
+            self.load_variant(selected, config, deps)?;
+        }
+        Ok(selected)
+    }
+
+    fn set_entry(
+        &mut self,
+        variant: ModelLanguage,
+        transcriber: Box<dyn Transcriber>,
+        model_size: String,
+        model_language: String,
+    ) {
+        self.entries.insert(
+            variant,
+            ModelPoolEntry {
+                transcriber,
+                model_size,
+                model_language,
+            },
+        );
+    }
+
+    fn transcriber_for_variant(&self, variant: ModelLanguage) -> Option<&dyn Transcriber> {
+        self.entries
+            .get(&variant)
+            .map(|entry| entry.transcriber.as_ref())
+    }
+
+    fn metadata_for_variant(&self, variant: ModelLanguage) -> Option<(&str, &str)> {
+        self.entries
+            .get(&variant)
+            .map(|entry| (entry.model_size.as_str(), entry.model_language.as_str()))
+    }
+
+    fn load_variant(
+        &mut self,
+        variant: ModelLanguage,
+        config: &DaemonConfig,
+        deps: &DaemonDeps,
+    ) -> Result<(), AppError> {
+        let spec = ModelSpec::new(config.model_size, variant);
+        let transcriber = deps
+            .transcriber_factory
+            .load(&spec, config.download_model)?;
+        self.set_entry(
+            variant,
+            transcriber,
+            model_size_token(spec.size).to_string(),
+            model_language_token(spec.language).to_string(),
+        );
+        Ok(())
+    }
+
+    fn select_variant(
+        &self,
+        preferred: ModelLanguage,
+        configured: ModelVariants,
+    ) -> Option<ModelLanguage> {
+        if configured.includes(preferred) {
+            return Some(preferred);
+        }
+
+        if preferred == ModelLanguage::En && configured.includes(ModelLanguage::Auto) {
+            return Some(ModelLanguage::Auto);
+        }
+
+        None
+    }
 }
 
 pub fn run_daemon(
@@ -132,8 +255,15 @@ pub fn run_daemon(
     output: &mut dyn DaemonOutput,
 ) -> Result<(), AppError> {
     let socket_path = daemon_socket_path()?;
-    let (_guard, control_events) = start_socket_listener(&socket_path)?;
+    let (_control_guard, control_events) = start_socket_listener(&socket_path)?;
     output.stdout(&format!("Daemon listening on {}", socket_path.display()));
+
+    let events_socket_path = daemon_events_socket_path()?;
+    let (_events_guard, event_sender) = start_events_socket_listener(&events_socket_path)?;
+    output.stdout(&format!(
+        "Daemon events on {}",
+        events_socket_path.display()
+    ));
 
     let shutdown = Arc::new(AtomicBool::new(false));
     for signal in [SIGINT, SIGTERM] {
@@ -142,16 +272,25 @@ pub fn run_daemon(
         })?;
     }
 
-    run_daemon_loop(config, deps, output, control_events, &shutdown)
+    run_daemon_loop(
+        config,
+        deps,
+        output,
+        control_events,
+        &shutdown,
+        Some(&event_sender),
+    )
 }
 
 pub fn run_daemon_loop(
     config: &DaemonConfig,
     deps: &DaemonDeps,
     output: &mut dyn DaemonOutput,
-    control_events: Receiver<ControlEvent>,
+    control_events: Receiver<ControlMessage>,
     shutdown: &AtomicBool,
+    event_sender: Option<&mpsc::Sender<ipc::DaemonEvent>>,
 ) -> Result<(), AppError> {
+    let mut model_pool = ModelPool::preload(config, deps)?;
     let host = select_audio_host(config.audio_host)?;
     audio::configure_alsa_logging(config.debug_audio);
     let devices = deps
@@ -169,9 +308,6 @@ pub fn run_daemon_loop(
         }
     }
 
-    let mut transcriber = deps
-        .transcriber_factory
-        .load(config.model_path.as_deref())?;
     let vad = audio::VadConfig::new(
         config.vad == VadMode::On,
         config.vad_silence_ms,
@@ -181,95 +317,156 @@ pub fn run_daemon_loop(
     );
 
     let mut recording = false;
+    let mut active_language = normalize_language(&config.language);
+    let mut active_variant = model_pool.resolve_language(active_language.as_str(), config, deps)?;
     let mut buffer = Vec::new();
     let mut utterance_index = 0u64;
     let mut capture: Option<Box<dyn CaptureSource>> = None;
 
+    emit_daemon_event(event_sender, ipc::DaemonEventType::DaemonReady);
+    emit_model_loaded_event(event_sender, &model_pool, &active_language, active_variant);
+
     loop {
         if shutdown.load(Ordering::Relaxed) {
             if recording {
-                stop_recording(
-                    &*transcriber,
+                let active_transcriber = active_transcriber(&model_pool, active_variant)?;
+                let mut recording_context = RecordingContext {
+                    transcriber: active_transcriber,
                     config,
-                    &vad,
+                    language: active_language.as_str(),
+                    vad: &vad,
+                    output,
+                    event_sender,
+                };
+                stop_recording(
+                    &mut recording_context,
                     &mut capture,
                     &mut buffer,
                     &mut utterance_index,
-                    output,
                 )?;
+                emit_daemon_event(
+                    event_sender,
+                    ipc::DaemonEventType::RecordingStopped {
+                        language: active_language.clone(),
+                    },
+                );
             }
             output.stdout("Daemon shutting down.");
             break;
         }
         match control_events.recv_timeout(Duration::from_millis(20)) {
-            Ok(ControlEvent::Toggle) => {
-                if recording {
-                    recording = false;
-                    stop_recording(
-                        &*transcriber,
-                        config,
-                        &vad,
-                        &mut capture,
-                        &mut buffer,
-                        &mut utterance_index,
-                        output,
-                    )?;
-                } else {
-                    let new_capture = deps
-                        .audio
-                        .start_capture(&host, config.device.as_deref(), config.sample_rate)
-                        .map_err(|err| match err.kind {
-                            audio::AudioErrorKind::DeviceNotFound if config.device.is_some() => {
-                                AppError::audio(err.message)
-                            }
-                            _ => AppError::audio(err.message),
-                        })?;
-                    recording = true;
-                    buffer.clear();
-                    capture = Some(new_capture);
-                    output.stdout("Toggle on. Recording...");
-                }
-            }
-            Ok(ControlEvent::Stop) => {
-                shutdown.store(true, Ordering::Relaxed);
-            }
-            Ok(ControlEvent::SetModel {
-                size,
-                model_language,
-            }) => {
-                if recording {
-                    recording = false;
-                    buffer.clear();
-                    capture = None;
-                    output.stdout("Recording stopped for model reload.");
-                }
-                let spec = ModelSpec::new(size, model_language);
-                match model::prepare_model(None, &spec, config.download_model) {
-                    Ok(prepared) => {
-                        if prepared.downloaded {
-                            output.stdout("Model download complete.");
+            Ok(message) => {
+                let response = match message.event {
+                    ControlEvent::Toggle { language } => {
+                        if let Some(language) = language {
+                            let normalized = normalize_language(&language);
+                            active_variant =
+                                model_pool.resolve_language(normalized.as_str(), config, deps)?;
+                            active_language = normalized;
+                            emit_model_loaded_event(
+                                event_sender,
+                                &model_pool,
+                                &active_language,
+                                active_variant,
+                            );
                         }
-                        let new_path = prepared.path.clone();
-                        match deps.transcriber_factory.load(Some(&new_path)) {
-                            Ok(new_transcriber) => {
-                                transcriber = new_transcriber;
-                                output.stdout(&format!(
-                                    "Model reloaded: size={}, model-language={}",
-                                    model_size_token(size),
-                                    model_language_token(model_language)
-                                ));
-                            }
-                            Err(err) => {
-                                output.stderr(&format!("Model reload failed: {err}"));
-                            }
+
+                        if recording {
+                            recording = false;
+                            let active_transcriber =
+                                active_transcriber(&model_pool, active_variant)?;
+                            let mut recording_context = RecordingContext {
+                                transcriber: active_transcriber,
+                                config,
+                                language: active_language.as_str(),
+                                vad: &vad,
+                                output,
+                                event_sender,
+                            };
+                            stop_recording(
+                                &mut recording_context,
+                                &mut capture,
+                                &mut buffer,
+                                &mut utterance_index,
+                            )?;
+                            emit_daemon_event(
+                                event_sender,
+                                ipc::DaemonEventType::RecordingStopped {
+                                    language: active_language.clone(),
+                                },
+                            );
+                            control_ok_response("idle", active_language.as_str())
+                        } else {
+                            let new_capture = deps
+                                .audio
+                                .start_capture(&host, config.device.as_deref(), config.sample_rate)
+                                .map_err(|err| match err.kind {
+                                    audio::AudioErrorKind::DeviceNotFound
+                                        if config.device.is_some() =>
+                                    {
+                                        AppError::audio(err.message)
+                                    }
+                                    _ => AppError::audio(err.message),
+                                })?;
+                            recording = true;
+                            buffer.clear();
+                            capture = Some(new_capture);
+                            output.stdout("Toggle on. Recording...");
+                            emit_daemon_event(
+                                event_sender,
+                                ipc::DaemonEventType::RecordingStarted {
+                                    language: active_language.clone(),
+                                },
+                            );
+                            control_ok_response("recording", active_language.as_str())
                         }
                     }
-                    Err(err) => {
-                        output.stderr(&format!("Model reload failed: {err}"));
+                    ControlEvent::Status => {
+                        let state = if recording { "recording" } else { "idle" };
+                        control_ok_response(state, active_language.as_str())
                     }
+                    ControlEvent::SetLanguage { language } => {
+                        let normalized = normalize_language(&language);
+                        active_variant =
+                            model_pool.resolve_language(normalized.as_str(), config, deps)?;
+                        active_language = normalized;
+                        emit_model_loaded_event(
+                            event_sender,
+                            &model_pool,
+                            &active_language,
+                            active_variant,
+                        );
+                        let state = if recording { "recording" } else { "idle" };
+                        control_ok_response(state, active_language.as_str())
+                    }
+                    ControlEvent::Stop => {
+                        shutdown.store(true, Ordering::Relaxed);
+                        control_ok_response(
+                            if recording { "recording" } else { "idle" },
+                            active_language.as_str(),
+                        )
+                    }
+                    ControlEvent::Error(error_message) => {
+                        emit_daemon_event(
+                            event_sender,
+                            ipc::DaemonEventType::Error {
+                                message: error_message.clone(),
+                            },
+                        );
+                        if let Some(sender) = message.response {
+                            let _ = sender.send(control_error_response(
+                                "listener_error",
+                                error_message.clone(),
+                            ));
+                        }
+                        return Err(AppError::runtime(error_message));
+                    }
+                };
+
+                if let Some(sender) = message.response {
+                    let _ = sender.send(response);
                 }
             }
-            Ok(ControlEvent::Error(message)) => return Err(AppError::runtime(message)),
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => {
                 return Err(AppError::runtime("socket listener disconnected"))
@@ -286,45 +483,57 @@ pub fn run_daemon_loop(
 }
 
 fn stop_recording(
-    transcriber: &dyn Transcriber,
-    config: &DaemonConfig,
-    vad: &audio::VadConfig,
+    context: &mut RecordingContext<'_>,
     capture: &mut Option<Box<dyn CaptureSource>>,
     buffer: &mut Vec<f32>,
     utterance_index: &mut u64,
-    output: &mut dyn DaemonOutput,
 ) -> Result<(), AppError> {
     let mut active = capture
         .take()
         .ok_or_else(|| AppError::runtime("capture stream missing"))?;
     active.drain(buffer);
-    finalize_recording(transcriber, config, vad, buffer, utterance_index, output)?;
+    finalize_recording(context, buffer, utterance_index)?;
     Ok(())
 }
 
+struct RecordingContext<'a> {
+    transcriber: &'a dyn Transcriber,
+    config: &'a DaemonConfig,
+    language: &'a str,
+    vad: &'a audio::VadConfig,
+    output: &'a mut dyn DaemonOutput,
+    event_sender: Option<&'a mpsc::Sender<ipc::DaemonEvent>>,
+}
+
 fn finalize_recording(
-    transcriber: &dyn Transcriber,
-    config: &DaemonConfig,
-    vad: &audio::VadConfig,
+    context: &mut RecordingContext<'_>,
     buffer: &[f32],
     utterance_index: &mut u64,
-    output: &mut dyn DaemonOutput,
 ) -> Result<(), AppError> {
-    let trimmed = audio::trim_trailing_silence(buffer, config.sample_rate, vad);
+    let trimmed = audio::trim_trailing_silence(buffer, context.config.sample_rate, context.vad);
     if trimmed.is_empty() {
         return Ok(());
     }
     *utterance_index += 1;
-    let duration_ms = audio::samples_to_ms(trimmed.len(), config.sample_rate);
-    if config.dump_audio {
-        dump_audio_samples(&trimmed, config.sample_rate, output)?;
+    let duration_ms = audio::samples_to_ms(trimmed.len(), context.config.sample_rate);
+    if context.config.dump_audio {
+        dump_audio_samples(&trimmed, context.config.sample_rate, context.output)?;
     }
-    let transcript = transcriber
-        .transcribe(&trimmed, Some(&config.language))
-        .map_err(|err| AppError::runtime(err.to_string()))?;
+    let transcript = context
+        .transcriber
+        .transcribe(&trimmed, Some(context.language))
+        .map_err(|err| {
+            emit_daemon_event(
+                context.event_sender,
+                ipc::DaemonEventType::Error {
+                    message: err.to_string(),
+                },
+            );
+            AppError::runtime(err.to_string())
+        })?;
     emit_transcript(
-        config,
-        output,
+        context.config,
+        context.output,
         &transcript,
         audio::SegmentInfo {
             index: *utterance_index,
@@ -332,8 +541,60 @@ fn finalize_recording(
         },
     )
     .map_err(AppError::runtime)?;
-    output.stdout("Ready for next utterance.");
+    emit_daemon_event(
+        context.event_sender,
+        ipc::DaemonEventType::TranscriptFinal {
+            language: context.language.to_string(),
+            utterance: *utterance_index,
+            duration_ms,
+            text: transcript,
+        },
+    );
+    context.output.stdout("Ready for next utterance.");
     Ok(())
+}
+
+fn emit_daemon_event(sender: Option<&mpsc::Sender<ipc::DaemonEvent>>, event: ipc::DaemonEventType) {
+    let Some(sender) = sender else {
+        return;
+    };
+    let event = ipc::DaemonEvent::new(Utc::now().to_rfc3339(), event);
+    let _ = sender.send(event);
+}
+
+fn emit_model_loaded_event(
+    sender: Option<&mpsc::Sender<ipc::DaemonEvent>>,
+    model_pool: &ModelPool,
+    language: &str,
+    variant: ModelLanguage,
+) {
+    let Some((model_size, model_language)) = model_pool.metadata_for_variant(variant) else {
+        return;
+    };
+    emit_daemon_event(
+        sender,
+        ipc::DaemonEventType::ModelLoaded {
+            language: language.to_string(),
+            model_size: model_size.to_string(),
+            model_language: model_language.to_string(),
+        },
+    );
+}
+
+fn active_transcriber(
+    model_pool: &ModelPool,
+    variant: ModelLanguage,
+) -> Result<&dyn Transcriber, AppError> {
+    model_pool.transcriber_for_variant(variant).ok_or_else(|| {
+        AppError::runtime(format!(
+            "no transcriber loaded for model variant '{}'",
+            model_language_token(variant)
+        ))
+    })
+}
+
+fn normalize_language(language: &str) -> String {
+    language.trim().to_ascii_lowercase()
 }
 
 fn emit_transcript(
@@ -439,9 +700,77 @@ pub fn daemon_socket_path() -> Result<PathBuf, AppError> {
         .join("sv.sock"))
 }
 
-pub fn start_socket_listener(
+pub fn daemon_events_socket_path() -> Result<PathBuf, AppError> {
+    let runtime_dir = env::var_os("XDG_RUNTIME_DIR").ok_or_else(|| {
+        AppError::runtime(
+            "XDG_RUNTIME_DIR is not set; set it to a writable runtime dir (e.g. /run/user/$(id -u))",
+        )
+    })?;
+    Ok(PathBuf::from(runtime_dir)
+        .join("soundvibes")
+        .join("sv-events.sock"))
+}
+
+pub fn start_events_socket_listener(
     socket_path: &Path,
-) -> Result<(SocketGuard, Receiver<ControlEvent>), AppError> {
+) -> Result<(SocketGuard, mpsc::Sender<ipc::DaemonEvent>), AppError> {
+    prepare_socket_path(socket_path, "daemon events socket", None)?;
+
+    let listener = UnixListener::bind(socket_path).map_err(|err| {
+        AppError::runtime(format!(
+            "failed to bind daemon events socket {}: {err}",
+            socket_path.display()
+        ))
+    })?;
+    listener.set_nonblocking(true).map_err(|err| {
+        AppError::runtime(format!(
+            "failed to set daemon events socket to nonblocking mode {}: {err}",
+            socket_path.display()
+        ))
+    })?;
+    let guard = SocketGuard {
+        path: socket_path.to_path_buf(),
+    };
+    let (event_sender, event_receiver) = mpsc::channel();
+
+    thread::spawn(move || {
+        let mut subscribers: Vec<UnixStream> = Vec::new();
+        loop {
+            accept_event_subscribers(&listener, &mut subscribers);
+            match event_receiver.recv_timeout(Duration::from_millis(20)) {
+                Ok(event) => {
+                    let Ok(line) = ipc::to_json_line(&event) else {
+                        continue;
+                    };
+                    subscribers.retain_mut(|stream| stream.write_all(line.as_bytes()).is_ok());
+                }
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => break,
+            }
+        }
+    });
+
+    Ok((guard, event_sender))
+}
+
+fn accept_event_subscribers(listener: &UnixListener, subscribers: &mut Vec<UnixStream>) {
+    loop {
+        match listener.accept() {
+            Ok((stream, _addr)) => {
+                let _ = stream.set_write_timeout(Some(Duration::from_millis(50)));
+                subscribers.push(stream);
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => break,
+            Err(_) => break,
+        }
+    }
+}
+
+fn prepare_socket_path(
+    socket_path: &Path,
+    socket_name: &str,
+    active_error: Option<&str>,
+) -> Result<(), AppError> {
     if let Some(parent) = socket_path.parent() {
         fs::create_dir_all(parent).map_err(|err| {
             AppError::runtime(format!(
@@ -453,17 +782,33 @@ pub fn start_socket_listener(
 
     if socket_path.exists() {
         if UnixStream::connect(socket_path).is_ok() {
-            return Err(AppError::runtime(
-                "daemon already running; use `sv` to toggle capture",
-            ));
+            if let Some(active_error) = active_error {
+                return Err(AppError::runtime(active_error));
+            }
+            return Err(AppError::runtime(format!(
+                "{socket_name} already active at {}",
+                socket_path.display()
+            )));
         }
         fs::remove_file(socket_path).map_err(|err| {
             AppError::runtime(format!(
-                "failed to remove stale daemon socket {}: {err}",
+                "failed to remove stale socket {}: {err}",
                 socket_path.display()
             ))
         })?;
     }
+
+    Ok(())
+}
+
+pub fn start_socket_listener(
+    socket_path: &Path,
+) -> Result<(SocketGuard, Receiver<ControlMessage>), AppError> {
+    prepare_socket_path(
+        socket_path,
+        "daemon control socket",
+        Some("daemon already running; use `sv` to toggle capture"),
+    )?;
 
     let listener = UnixListener::bind(socket_path).map_err(|err| {
         AppError::runtime(format!(
@@ -482,33 +827,61 @@ pub fn start_socket_listener(
                 Ok(mut stream) => {
                     let mut buffer = String::new();
                     if let Err(err) = stream.read_to_string(&mut buffer) {
-                        eprintln!("socket read error: {err}");
+                        let _ = write_control_response(
+                            &mut stream,
+                            &control_error_response(
+                                "read_error",
+                                format!("socket read error: {err}"),
+                            ),
+                        );
                         continue;
                     }
                     let command = buffer.trim();
-                    if command.is_empty() || command == "toggle" {
-                        let _ = sender.send(ControlEvent::Toggle);
-                    } else if command == "stop" {
-                        let _ = sender.send(ControlEvent::Stop);
-                    } else if command.starts_with("set-model") {
-                        match parse_set_model_command(command) {
-                            Ok((size, model_language)) => {
-                                let _ = sender.send(ControlEvent::SetModel {
-                                    size,
-                                    model_language,
-                                });
-                            }
-                            Err(message) => {
-                                eprintln!("invalid set-model command: {message}");
-                            }
+
+                    let event = match control_event_from_command(command) {
+                        Ok(event) => event,
+                        Err(message) => {
+                            let _ = write_control_response(
+                                &mut stream,
+                                &control_error_response("invalid_request", message),
+                            );
+                            continue;
                         }
-                    } else {
-                        eprintln!("unsupported daemon command: {command}");
+                    };
+
+                    let (response_sender, response_receiver) = mpsc::channel();
+                    if sender
+                        .send(ControlMessage {
+                            event,
+                            response: Some(response_sender),
+                        })
+                        .is_err()
+                    {
+                        let _ = write_control_response(
+                            &mut stream,
+                            &control_error_response(
+                                "listener_error",
+                                "daemon loop not available".to_string(),
+                            ),
+                        );
+                        break;
                     }
+
+                    let response = response_receiver
+                        .recv_timeout(Duration::from_secs(2))
+                        .unwrap_or_else(|_| {
+                            control_error_response(
+                                "timeout",
+                                "daemon response timed out".to_string(),
+                            )
+                        });
+                    let _ = write_control_response(&mut stream, &response);
                 }
                 Err(err) => {
-                    let _ =
-                        sender.send(ControlEvent::Error(format!("socket listener error: {err}")));
+                    let _ = sender.send(ControlMessage {
+                        event: ControlEvent::Error(format!("socket listener error: {err}")),
+                        response: None,
+                    });
                     break;
                 }
             }
@@ -518,69 +891,61 @@ pub fn start_socket_listener(
     Ok((guard, receiver))
 }
 
-fn parse_set_model_command(command: &str) -> Result<(ModelSize, ModelLanguage), String> {
-    let mut size = None;
-    let mut model_language = None;
-    for token in command.split_whitespace().skip(1) {
-        if let Some(value) = token.strip_prefix("size=") {
-            size = Some(parse_model_size(value).ok_or_else(|| {
-                format!("invalid model size '{value}' (expected auto|tiny|base|small|medium|large)")
-            })?);
-        } else if let Some(value) = token.strip_prefix("model-language=") {
-            model_language =
-                Some(parse_model_language(value).ok_or_else(|| {
-                    format!("invalid model language '{value}' (expected auto|en)")
-                })?);
+fn control_event_from_command(command: &str) -> Result<ControlEvent, String> {
+    let request = ipc::parse_control_request(command)?;
+    match request.command {
+        ipc::ControlCommand::Toggle { lang } => Ok(ControlEvent::Toggle { language: lang }),
+        ipc::ControlCommand::Status => Ok(ControlEvent::Status),
+        ipc::ControlCommand::SetLanguage { lang } => {
+            Ok(ControlEvent::SetLanguage { language: lang })
         }
-    }
-
-    let size = size.ok_or_else(|| "missing size=<SIZE>".to_string())?;
-    let model_language =
-        model_language.ok_or_else(|| "missing model-language=<LANG>".to_string())?;
-    Ok((size, model_language))
-}
-
-fn parse_model_size(value: &str) -> Option<ModelSize> {
-    match value {
-        "auto" => Some(ModelSize::Auto),
-        "tiny" => Some(ModelSize::Tiny),
-        "base" => Some(ModelSize::Base),
-        "small" => Some(ModelSize::Small),
-        "medium" => Some(ModelSize::Medium),
-        "large" => Some(ModelSize::Large),
-        _ => None,
+        ipc::ControlCommand::Stop => Ok(ControlEvent::Stop),
     }
 }
 
-fn parse_model_language(value: &str) -> Option<ModelLanguage> {
-    match value {
-        "auto" => Some(ModelLanguage::Auto),
-        "en" => Some(ModelLanguage::En),
-        _ => None,
-    }
-}
-
-pub fn send_toggle_command() -> Result<(), AppError> {
-    send_daemon_command("toggle")
-}
-
-pub fn send_stop_command() -> Result<(), AppError> {
-    send_daemon_command("stop")
-}
-
-pub fn send_set_model_command(
-    size: ModelSize,
-    model_language: ModelLanguage,
+fn write_control_response(
+    stream: &mut UnixStream,
+    response: &ipc::ControlResponse,
 ) -> Result<(), AppError> {
-    let command = format!(
-        "set-model size={} model-language={}",
-        model_size_token(size),
-        model_language_token(model_language)
-    );
+    let line = ipc::to_json_line(response)
+        .map_err(|err| AppError::runtime(format!("failed to serialize control response: {err}")))?;
+    stream
+        .write_all(line.as_bytes())
+        .map_err(|err| AppError::runtime(format!("failed to write control response: {err}")))
+}
+
+fn control_ok_response(state: &str, language: &str) -> ipc::ControlResponse {
+    ipc::ControlResponse::ok(Some(state.to_string()), Some(language.to_string()))
+}
+
+fn control_error_response(
+    error: impl Into<String>,
+    message: impl Into<String>,
+) -> ipc::ControlResponse {
+    ipc::ControlResponse::error(error, message)
+}
+
+pub fn send_toggle_command(language: Option<&str>) -> Result<ipc::ControlResponse, AppError> {
+    let command = match language {
+        Some(language) if !language.trim().is_empty() => format!("toggle lang={language}"),
+        _ => "toggle".to_string(),
+    };
     send_daemon_command(&command)
 }
 
-fn send_daemon_command(command: &str) -> Result<(), AppError> {
+pub fn send_status_command() -> Result<ipc::ControlResponse, AppError> {
+    send_daemon_command("status")
+}
+
+pub fn send_set_language_command(language: &str) -> Result<ipc::ControlResponse, AppError> {
+    send_daemon_command(&format!("set-language lang={language}"))
+}
+
+pub fn send_stop_command() -> Result<ipc::ControlResponse, AppError> {
+    send_daemon_command("stop")
+}
+
+fn send_daemon_command(command: &str) -> Result<ipc::ControlResponse, AppError> {
     let socket_path = daemon_socket_path()?;
     if !socket_path.exists() {
         return Err(AppError::runtime(format!(
@@ -598,7 +963,31 @@ fn send_daemon_command(command: &str) -> Result<(), AppError> {
     stream
         .write_all(payload.as_bytes())
         .map_err(|err| AppError::runtime(format!("failed to send {command}: {err}")))?;
-    Ok(())
+    stream
+        .shutdown(Shutdown::Write)
+        .map_err(|err| AppError::runtime(format!("failed to finalize command write: {err}")))?;
+
+    let mut response_line = String::new();
+    stream
+        .read_to_string(&mut response_line)
+        .map_err(|err| AppError::runtime(format!("failed to read daemon response: {err}")))?;
+
+    if response_line.trim().is_empty() {
+        return Err(AppError::runtime("daemon returned an empty response"));
+    }
+
+    let response = ipc::parse_control_response(&response_line)
+        .map_err(|err| AppError::runtime(format!("invalid daemon response: {err}")))?;
+    if !response.ok {
+        let message = response
+            .message
+            .clone()
+            .or(response.error.clone())
+            .unwrap_or_else(|| "unknown daemon error".to_string());
+        return Err(AppError::runtime(message));
+    }
+
+    Ok(response)
 }
 
 fn model_size_token(size: ModelSize) -> &'static str {
@@ -650,9 +1039,14 @@ impl CaptureSource for CpalCapture {
 struct WhisperFactory;
 
 impl TranscriberFactory for WhisperFactory {
-    fn load(&self, model_path: Option<&Path>) -> Result<Box<dyn Transcriber>, AppError> {
-        let model_path = model_path.ok_or_else(|| AppError::config("model path is required"))?;
-        let context = WhisperContext::from_file(model_path)
+    fn load(
+        &self,
+        spec: &ModelSpec,
+        allow_download: bool,
+    ) -> Result<Box<dyn Transcriber>, AppError> {
+        let prepared = model::prepare_model(None, spec, allow_download)?;
+        let model_path = prepared.path;
+        let context = WhisperContext::from_file(&model_path)
             .map_err(|err| AppError::runtime(err.to_string()))?;
         Ok(Box::new(WhisperTranscriber { context }))
     }
@@ -673,15 +1067,16 @@ impl Transcriber for WhisperTranscriber {
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support {
     use std::collections::VecDeque;
-    use std::path::Path;
     use std::sync::mpsc;
     use std::sync::{Arc, Mutex};
 
     use super::{
-        AudioBackend, CaptureSource, ControlEvent, DaemonOutput, Transcriber, TranscriberFactory,
+        AudioBackend, CaptureSource, ControlEvent, ControlMessage, DaemonOutput, Transcriber,
+        TranscriberFactory,
     };
     use crate::audio::{AudioError, AudioErrorKind};
     use crate::error::AppError;
+    use crate::model::ModelSpec;
 
     #[derive(Default)]
     pub struct TestOutput {
@@ -786,6 +1181,8 @@ pub mod test_support {
     #[derive(Clone)]
     pub struct TestTranscriberFactory {
         responses: Arc<Mutex<VecDeque<Result<String, AppError>>>>,
+        loaded_specs: Arc<Mutex<Vec<(ModelSpec, bool)>>>,
+        transcribe_languages: Arc<Mutex<Vec<Option<String>>>>,
     }
 
     impl TestTranscriberFactory {
@@ -793,34 +1190,63 @@ pub mod test_support {
             let responses = responses.into_iter().map(Ok).collect();
             Self {
                 responses: Arc::new(Mutex::new(responses)),
+                loaded_specs: Arc::new(Mutex::new(Vec::new())),
+                transcribe_languages: Arc::new(Mutex::new(Vec::new())),
             }
         }
 
         pub fn with_results(responses: Vec<Result<String, AppError>>) -> Self {
             Self {
                 responses: Arc::new(Mutex::new(responses.into())),
+                loaded_specs: Arc::new(Mutex::new(Vec::new())),
+                transcribe_languages: Arc::new(Mutex::new(Vec::new())),
             }
+        }
+
+        pub fn load_count(&self) -> usize {
+            self.loaded_specs.lock().expect("loaded specs lock").len()
+        }
+
+        pub fn loaded_specs(&self) -> Vec<(ModelSpec, bool)> {
+            self.loaded_specs.lock().expect("loaded specs lock").clone()
+        }
+
+        pub fn transcribed_languages(&self) -> Vec<Option<String>> {
+            self.transcribe_languages
+                .lock()
+                .expect("transcribed languages lock")
+                .clone()
         }
     }
 
     impl TranscriberFactory for TestTranscriberFactory {
-        fn load(&self, _model_path: Option<&Path>) -> Result<Box<dyn Transcriber>, AppError> {
+        fn load(
+            &self,
+            spec: &ModelSpec,
+            allow_download: bool,
+        ) -> Result<Box<dyn Transcriber>, AppError> {
+            self.loaded_specs
+                .lock()
+                .expect("loaded specs lock")
+                .push((*spec, allow_download));
             Ok(Box::new(TestTranscriber {
                 responses: Arc::clone(&self.responses),
+                transcribe_languages: Arc::clone(&self.transcribe_languages),
             }))
         }
     }
 
     struct TestTranscriber {
         responses: Arc<Mutex<VecDeque<Result<String, AppError>>>>,
+        transcribe_languages: Arc<Mutex<Vec<Option<String>>>>,
     }
 
     impl Transcriber for TestTranscriber {
-        fn transcribe(
-            &self,
-            _samples: &[f32],
-            _language: Option<&str>,
-        ) -> Result<String, AppError> {
+        fn transcribe(&self, _samples: &[f32], language: Option<&str>) -> Result<String, AppError> {
+            self.transcribe_languages
+                .lock()
+                .expect("transcribed languages lock")
+                .push(language.map(|value| value.to_string()));
             let next = self
                 .responses
                 .lock()
@@ -833,22 +1259,109 @@ pub mod test_support {
         }
     }
 
-    pub fn control_channel() -> (mpsc::Sender<ControlEvent>, mpsc::Receiver<ControlEvent>) {
+    pub fn control_channel() -> (mpsc::Sender<ControlMessage>, mpsc::Receiver<ControlMessage>) {
         mpsc::channel()
+    }
+
+    pub fn control_message(event: ControlEvent) -> ControlMessage {
+        ControlMessage {
+            event,
+            response: None,
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::env;
+    use std::fs;
+    use std::io::{Read, Write};
+    use std::path::Path;
+    use std::process;
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex, OnceLock};
     use std::thread;
     use std::time::Duration;
 
     use super::test_support::{
-        control_channel, TestAudioBackend, TestOutput, TestTranscriberFactory,
+        control_channel, control_message, TestAudioBackend, TestOutput, TestTranscriberFactory,
     };
+
+    static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &Path) -> Self {
+            let previous = env::var_os(key);
+            env::set_var(key, value);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => env::set_var(self.key, value),
+                None => env::remove_var(self.key),
+            }
+        }
+    }
+
+    fn lock_tests() -> std::sync::MutexGuard<'static, ()> {
+        TEST_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("test lock poisoned")
+    }
+
+    fn temp_runtime_dir() -> std::path::PathBuf {
+        let mut dir = env::temp_dir();
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        dir.push(format!("soundvibes-daemon-test-{}-{stamp}", process::id()));
+        dir
+    }
+
+    fn read_event_line(stream: &mut UnixStream) -> Result<String, AppError> {
+        let mut line = Vec::new();
+        let mut byte = [0u8; 1];
+        loop {
+            match stream.read(&mut byte) {
+                Ok(0) => break,
+                Ok(_) => {
+                    line.push(byte[0]);
+                    if byte[0] == b'\n' {
+                        break;
+                    }
+                }
+                Err(err)
+                    if err.kind() == std::io::ErrorKind::WouldBlock
+                        || err.kind() == std::io::ErrorKind::TimedOut =>
+                {
+                    return Err(AppError::runtime("timed out waiting for daemon event"));
+                }
+                Err(err) => {
+                    return Err(AppError::runtime(format!(
+                        "failed to read daemon event: {err}"
+                    )));
+                }
+            }
+        }
+
+        if line.is_empty() {
+            return Err(AppError::runtime("daemon event stream closed"));
+        }
+
+        String::from_utf8(line)
+            .map_err(|err| AppError::runtime(format!("invalid utf-8 daemon event: {err}")))
+    }
 
     #[test]
     fn daemon_loop_emits_transcript_to_output() -> Result<(), AppError> {
@@ -864,9 +1377,10 @@ mod tests {
             transcriber_factory: Box::new(TestTranscriberFactory::new(vec!["hello".to_string()])),
         };
         let config = DaemonConfig {
-            model_path: None,
+            model_size: ModelSize::Small,
             download_model: false,
             language: "en".to_string(),
+            model_variants: ModelVariants::Both,
             device: None,
             audio_host: AudioHost::Default,
             sample_rate: 16_000,
@@ -883,13 +1397,13 @@ mod tests {
 
         let shutdown_trigger = Arc::clone(&shutdown);
         let control_thread = thread::spawn(move || {
-            let _ = control_sender.send(ControlEvent::Toggle);
-            let _ = control_sender.send(ControlEvent::Toggle);
+            let _ = control_sender.send(control_message(ControlEvent::Toggle { language: None }));
+            let _ = control_sender.send(control_message(ControlEvent::Toggle { language: None }));
             thread::sleep(Duration::from_millis(50));
             shutdown_trigger.store(true, Ordering::Relaxed);
         });
 
-        let result = run_daemon_loop(&config, &deps, &mut output, receiver, &shutdown);
+        let result = run_daemon_loop(&config, &deps, &mut output, receiver, &shutdown, None);
         control_thread.join().expect("control thread failed");
         result?;
 
@@ -901,18 +1415,470 @@ mod tests {
     }
 
     #[test]
-    fn parses_set_model_command_tokens() {
-        let (size, model_language) =
-            parse_set_model_command("set-model size=small model-language=en")
-                .expect("expected parse success");
-        assert_eq!(size, ModelSize::Small);
-        assert_eq!(model_language, ModelLanguage::En);
+    fn socket_toggle_and_status_return_json_responses() -> Result<(), AppError> {
+        let _lock = lock_tests();
+        let runtime_dir = temp_runtime_dir();
+        fs::create_dir_all(&runtime_dir)
+            .map_err(|err| AppError::runtime(format!("failed to create runtime dir: {err}")))?;
+        let _env_guard = EnvGuard::set("XDG_RUNTIME_DIR", &runtime_dir);
+
+        let socket_path = daemon_socket_path()?;
+        let (_socket_guard, receiver) = start_socket_listener(&socket_path)?;
+
+        let deps = DaemonDeps {
+            audio: Box::new(TestAudioBackend::new(
+                vec!["Mic".to_string()],
+                vec![vec![0.2; 160]],
+            )),
+            transcriber_factory: Box::new(TestTranscriberFactory::new(vec!["hello".to_string()])),
+        };
+        let config = DaemonConfig {
+            model_size: ModelSize::Small,
+            download_model: false,
+            language: "en".to_string(),
+            model_variants: ModelVariants::Both,
+            device: None,
+            audio_host: AudioHost::Default,
+            sample_rate: 16_000,
+            format: OutputFormat::Plain,
+            mode: OutputMode::Stdout,
+            vad: VadMode::Off,
+            vad_silence_ms: 800,
+            vad_threshold: 0.015,
+            vad_chunk_ms: 250,
+            debug_audio: false,
+            debug_vad: false,
+            dump_audio: false,
+        };
+        let client_thread = thread::spawn(move || -> Result<(), AppError> {
+            let toggle_response = send_toggle_command(Some("fr"))?;
+            assert!(toggle_response.ok);
+            assert_eq!(toggle_response.state.as_deref(), Some("recording"));
+            assert_eq!(toggle_response.language.as_deref(), Some("fr"));
+
+            let status_response = send_status_command()?;
+            assert!(status_response.ok);
+            assert_eq!(status_response.state.as_deref(), Some("recording"));
+            assert_eq!(status_response.language.as_deref(), Some("fr"));
+
+            let _ = send_toggle_command(None)?;
+            let _ = send_stop_command()?;
+            Ok(())
+        });
+
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let mut output = TestOutput::default();
+        run_daemon_loop(
+            &config,
+            &deps,
+            &mut output,
+            receiver,
+            shutdown.as_ref(),
+            None,
+        )?;
+
+        client_thread
+            .join()
+            .map_err(|_| AppError::runtime("client thread panicked"))??;
+        Ok(())
     }
 
     #[test]
-    fn rejects_set_model_command_missing_language() {
-        let err =
-            parse_set_model_command("set-model size=small").expect_err("expected parse error");
-        assert!(err.contains("model-language"));
+    fn socket_invalid_command_returns_json_error() -> Result<(), AppError> {
+        let _lock = lock_tests();
+        let runtime_dir = temp_runtime_dir();
+        fs::create_dir_all(&runtime_dir)
+            .map_err(|err| AppError::runtime(format!("failed to create runtime dir: {err}")))?;
+        let _env_guard = EnvGuard::set("XDG_RUNTIME_DIR", &runtime_dir);
+
+        let socket_path = daemon_socket_path()?;
+        let (_socket_guard, _receiver) = start_socket_listener(&socket_path)?;
+        let mut stream = UnixStream::connect(&socket_path)
+            .map_err(|err| AppError::runtime(format!("failed to connect to socket: {err}")))?;
+        stream
+            .write_all(b"bogus\n")
+            .map_err(|err| AppError::runtime(format!("failed to write command: {err}")))?;
+        stream
+            .shutdown(Shutdown::Write)
+            .map_err(|err| AppError::runtime(format!("failed to close write side: {err}")))?;
+
+        let mut response_line = String::new();
+        stream
+            .read_to_string(&mut response_line)
+            .map_err(|err| AppError::runtime(format!("failed to read response: {err}")))?;
+        let response = ipc::parse_control_response(&response_line)
+            .map_err(|err| AppError::runtime(format!("failed to parse response: {err}")))?;
+
+        assert!(!response.ok);
+        assert_eq!(response.error.as_deref(), Some("invalid_request"));
+        Ok(())
+    }
+
+    #[test]
+    fn event_fanout_broadcasts_identical_events_to_multiple_clients() -> Result<(), AppError> {
+        let _lock = lock_tests();
+        let runtime_dir = temp_runtime_dir();
+        fs::create_dir_all(&runtime_dir)
+            .map_err(|err| AppError::runtime(format!("failed to create runtime dir: {err}")))?;
+        let _env_guard = EnvGuard::set("XDG_RUNTIME_DIR", &runtime_dir);
+
+        let socket_path = daemon_events_socket_path()?;
+        let (_socket_guard, event_sender) = start_events_socket_listener(&socket_path)?;
+
+        let mut first = UnixStream::connect(&socket_path)
+            .map_err(|err| AppError::runtime(format!("failed to connect first client: {err}")))?;
+        let mut second = UnixStream::connect(&socket_path)
+            .map_err(|err| AppError::runtime(format!("failed to connect second client: {err}")))?;
+        first
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .map_err(|err| AppError::runtime(format!("failed to set first timeout: {err}")))?;
+        second
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .map_err(|err| AppError::runtime(format!("failed to set second timeout: {err}")))?;
+
+        thread::sleep(Duration::from_millis(40));
+
+        let expected =
+            ipc::DaemonEvent::new("2026-02-06T10:00:00Z", ipc::DaemonEventType::DaemonReady);
+        event_sender
+            .send(expected.clone())
+            .map_err(|err| AppError::runtime(format!("failed to send event: {err}")))?;
+
+        let first_line = read_event_line(&mut first)?;
+        let second_line = read_event_line(&mut second)?;
+
+        let first_event = ipc::from_json_line::<ipc::DaemonEvent>(&first_line)
+            .map_err(|err| AppError::runtime(format!("failed to parse first event: {err}")))?;
+        let second_event = ipc::from_json_line::<ipc::DaemonEvent>(&second_line)
+            .map_err(|err| AppError::runtime(format!("failed to parse second event: {err}")))?;
+
+        assert_eq!(first_event, expected);
+        assert_eq!(second_event, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn event_fanout_drops_disconnected_clients_and_keeps_healthy_clients() -> Result<(), AppError> {
+        let _lock = lock_tests();
+        let runtime_dir = temp_runtime_dir();
+        fs::create_dir_all(&runtime_dir)
+            .map_err(|err| AppError::runtime(format!("failed to create runtime dir: {err}")))?;
+        let _env_guard = EnvGuard::set("XDG_RUNTIME_DIR", &runtime_dir);
+
+        let socket_path = daemon_events_socket_path()?;
+        let (_socket_guard, event_sender) = start_events_socket_listener(&socket_path)?;
+
+        let disconnected = UnixStream::connect(&socket_path).map_err(|err| {
+            AppError::runtime(format!("failed to connect disconnected client: {err}"))
+        })?;
+        let mut healthy = UnixStream::connect(&socket_path)
+            .map_err(|err| AppError::runtime(format!("failed to connect healthy client: {err}")))?;
+        healthy
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .map_err(|err| AppError::runtime(format!("failed to set timeout: {err}")))?;
+
+        drop(disconnected);
+        thread::sleep(Duration::from_millis(40));
+
+        let first_expected = ipc::DaemonEvent::new(
+            "2026-02-06T10:00:01Z",
+            ipc::DaemonEventType::RecordingStarted {
+                language: "fr".to_string(),
+            },
+        );
+        let second_expected = ipc::DaemonEvent::new(
+            "2026-02-06T10:00:02Z",
+            ipc::DaemonEventType::RecordingStopped {
+                language: "fr".to_string(),
+            },
+        );
+        event_sender
+            .send(first_expected.clone())
+            .map_err(|err| AppError::runtime(format!("failed to send first event: {err}")))?;
+        event_sender
+            .send(second_expected.clone())
+            .map_err(|err| AppError::runtime(format!("failed to send second event: {err}")))?;
+
+        let first_line = read_event_line(&mut healthy)?;
+        let second_line = read_event_line(&mut healthy)?;
+
+        let first_event = ipc::from_json_line::<ipc::DaemonEvent>(&first_line)
+            .map_err(|err| AppError::runtime(format!("failed to parse first event: {err}")))?;
+        let second_event = ipc::from_json_line::<ipc::DaemonEvent>(&second_line)
+            .map_err(|err| AppError::runtime(format!("failed to parse second event: {err}")))?;
+
+        assert_eq!(first_event, first_expected);
+        assert_eq!(second_event, second_expected);
+        Ok(())
+    }
+
+    #[test]
+    fn model_pool_preloads_configured_variants() -> Result<(), AppError> {
+        let transcriber_factory = TestTranscriberFactory::new(Vec::new());
+        let deps = DaemonDeps {
+            audio: Box::new(TestAudioBackend::new(vec!["Mic".to_string()], Vec::new())),
+            transcriber_factory: Box::new(transcriber_factory.clone()),
+        };
+        let config = DaemonConfig {
+            model_size: ModelSize::Small,
+            download_model: false,
+            language: "sv".to_string(),
+            model_variants: ModelVariants::Both,
+            device: None,
+            audio_host: AudioHost::Default,
+            sample_rate: 16_000,
+            format: OutputFormat::Plain,
+            mode: OutputMode::Stdout,
+            vad: VadMode::Off,
+            vad_silence_ms: 800,
+            vad_threshold: 0.015,
+            vad_chunk_ms: 250,
+            debug_audio: false,
+            debug_vad: false,
+            dump_audio: false,
+        };
+
+        let model_pool = ModelPool::preload(&config, &deps)?;
+
+        assert!(model_pool
+            .transcriber_for_variant(ModelLanguage::En)
+            .is_some());
+        assert!(model_pool
+            .transcriber_for_variant(ModelLanguage::Auto)
+            .is_some());
+        assert_eq!(transcriber_factory.load_count(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn model_pool_uses_configured_model_size_for_language_loads() -> Result<(), AppError> {
+        let transcriber_factory = TestTranscriberFactory::new(Vec::new());
+        let deps = DaemonDeps {
+            audio: Box::new(TestAudioBackend::new(vec!["Mic".to_string()], Vec::new())),
+            transcriber_factory: Box::new(transcriber_factory.clone()),
+        };
+        let config = DaemonConfig {
+            model_size: ModelSize::Medium,
+            download_model: false,
+            language: "en".to_string(),
+            model_variants: ModelVariants::Both,
+            device: None,
+            audio_host: AudioHost::Default,
+            sample_rate: 16_000,
+            format: OutputFormat::Plain,
+            mode: OutputMode::Stdout,
+            vad: VadMode::Off,
+            vad_silence_ms: 800,
+            vad_threshold: 0.015,
+            vad_chunk_ms: 250,
+            debug_audio: false,
+            debug_vad: false,
+            dump_audio: false,
+        };
+
+        let _model_pool = ModelPool::preload(&config, &deps)?;
+        let loaded_specs = transcriber_factory.loaded_specs();
+
+        assert!(!loaded_specs.is_empty());
+        assert!(loaded_specs
+            .iter()
+            .all(|(spec, _)| spec.size == ModelSize::Medium));
+        Ok(())
+    }
+
+    #[test]
+    fn model_pool_allows_english_with_multilingual_variant_only() -> Result<(), AppError> {
+        let transcriber_factory = TestTranscriberFactory::new(Vec::new());
+        let deps = DaemonDeps {
+            audio: Box::new(TestAudioBackend::new(vec!["Mic".to_string()], Vec::new())),
+            transcriber_factory: Box::new(transcriber_factory.clone()),
+        };
+        let config = DaemonConfig {
+            model_size: ModelSize::Small,
+            download_model: false,
+            language: "en".to_string(),
+            model_variants: ModelVariants::Multilingual,
+            device: None,
+            audio_host: AudioHost::Default,
+            sample_rate: 16_000,
+            format: OutputFormat::Plain,
+            mode: OutputMode::Stdout,
+            vad: VadMode::Off,
+            vad_silence_ms: 800,
+            vad_threshold: 0.015,
+            vad_chunk_ms: 250,
+            debug_audio: false,
+            debug_vad: false,
+            dump_audio: false,
+        };
+
+        let mut model_pool = ModelPool::preload(&config, &deps)?;
+        let resolved = model_pool.resolve_language("en", &config, &deps)?;
+        assert_eq!(resolved, ModelLanguage::Auto);
+        assert_eq!(transcriber_factory.load_count(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn model_pool_rejects_non_english_with_en_only_variant() {
+        let transcriber_factory = TestTranscriberFactory::new(Vec::new());
+        let deps = DaemonDeps {
+            audio: Box::new(TestAudioBackend::new(vec!["Mic".to_string()], Vec::new())),
+            transcriber_factory: Box::new(transcriber_factory),
+        };
+        let config = DaemonConfig {
+            model_size: ModelSize::Small,
+            model_variants: ModelVariants::En,
+            download_model: false,
+            language: "sv".to_string(),
+            device: None,
+            audio_host: AudioHost::Default,
+            sample_rate: 16_000,
+            format: OutputFormat::Plain,
+            mode: OutputMode::Stdout,
+            vad: VadMode::Off,
+            vad_silence_ms: 800,
+            vad_threshold: 0.015,
+            vad_chunk_ms: 250,
+            debug_audio: false,
+            debug_vad: false,
+            dump_audio: false,
+        };
+
+        let err = ModelPool::preload(&config, &deps)
+            .err()
+            .expect("expected config error");
+        assert!(err
+            .to_string()
+            .contains("no compatible model variant configured"));
+    }
+
+    #[test]
+    fn model_pool_switches_active_language_for_transcription() -> Result<(), AppError> {
+        let (sender, receiver) = control_channel();
+        let control_sender = sender.clone();
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let mut output = TestOutput::default();
+        let transcriber_factory = TestTranscriberFactory::new(vec!["bonjour".to_string()]);
+        let deps = DaemonDeps {
+            audio: Box::new(TestAudioBackend::new(
+                vec!["Mic".to_string()],
+                vec![vec![0.2; 160]],
+            )),
+            transcriber_factory: Box::new(transcriber_factory.clone()),
+        };
+        let config = DaemonConfig {
+            model_size: ModelSize::Small,
+            download_model: false,
+            language: "en".to_string(),
+            model_variants: ModelVariants::Both,
+            device: None,
+            audio_host: AudioHost::Default,
+            sample_rate: 16_000,
+            format: OutputFormat::Plain,
+            mode: OutputMode::Stdout,
+            vad: VadMode::Off,
+            vad_silence_ms: 800,
+            vad_threshold: 0.015,
+            vad_chunk_ms: 250,
+            debug_audio: false,
+            debug_vad: false,
+            dump_audio: false,
+        };
+
+        let shutdown_trigger = Arc::clone(&shutdown);
+        let control_thread = thread::spawn(move || {
+            let _ = control_sender.send(control_message(ControlEvent::SetLanguage {
+                language: "fr".to_string(),
+            }));
+            let _ = control_sender.send(control_message(ControlEvent::Toggle { language: None }));
+            let _ = control_sender.send(control_message(ControlEvent::Toggle { language: None }));
+            thread::sleep(Duration::from_millis(50));
+            shutdown_trigger.store(true, Ordering::Relaxed);
+        });
+
+        let result = run_daemon_loop(&config, &deps, &mut output, receiver, &shutdown, None);
+        control_thread.join().expect("control thread failed");
+        result?;
+
+        assert_eq!(transcriber_factory.load_count(), 2);
+        assert_eq!(
+            transcriber_factory.transcribed_languages(),
+            vec![Some("fr".to_string())]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn model_pool_loads_new_language_on_set_language() -> Result<(), AppError> {
+        let (sender, receiver) = control_channel();
+        let control_sender = sender.clone();
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let mut output = TestOutput::default();
+        let transcriber_factory = TestTranscriberFactory::new(vec!["hej".to_string()]);
+        let deps = DaemonDeps {
+            audio: Box::new(TestAudioBackend::new(
+                vec!["Mic".to_string()],
+                vec![vec![0.2; 160]],
+            )),
+            transcriber_factory: Box::new(transcriber_factory.clone()),
+        };
+        let config = DaemonConfig {
+            model_size: ModelSize::Small,
+            download_model: false,
+            language: "en".to_string(),
+            model_variants: ModelVariants::Both,
+            device: None,
+            audio_host: AudioHost::Default,
+            sample_rate: 16_000,
+            format: OutputFormat::Plain,
+            mode: OutputMode::Stdout,
+            vad: VadMode::Off,
+            vad_silence_ms: 800,
+            vad_threshold: 0.015,
+            vad_chunk_ms: 250,
+            debug_audio: false,
+            debug_vad: false,
+            dump_audio: false,
+        };
+
+        let shutdown_trigger = Arc::clone(&shutdown);
+        let control_thread = thread::spawn(move || {
+            let _ = control_sender.send(control_message(ControlEvent::SetLanguage {
+                language: "sv".to_string(),
+            }));
+            let _ = control_sender.send(control_message(ControlEvent::Toggle { language: None }));
+            let _ = control_sender.send(control_message(ControlEvent::Toggle { language: None }));
+            thread::sleep(Duration::from_millis(50));
+            shutdown_trigger.store(true, Ordering::Relaxed);
+        });
+
+        let result = run_daemon_loop(&config, &deps, &mut output, receiver, &shutdown, None);
+        control_thread.join().expect("control thread failed");
+        result?;
+
+        assert_eq!(transcriber_factory.load_count(), 2);
+        assert_eq!(
+            transcriber_factory.transcribed_languages(),
+            vec![Some("sv".to_string())]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn parses_toggle_request_command() {
+        let event = control_event_from_command("toggle lang=sv").expect("expected parse success");
+        assert_eq!(
+            event,
+            ControlEvent::Toggle {
+                language: Some("sv".to_string())
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_toggle_request_command_with_unknown_token() {
+        let err = control_event_from_command("toggle foo=bar").expect_err("expected parse error");
+        assert!(err.contains("unexpected token"));
     }
 }

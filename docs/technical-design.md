@@ -28,8 +28,9 @@ This document describes the technical design for the `sv` CLI that performs offl
 - Defaults are applied if keys are missing.
 - Configuration struct shared across pipeline components.
 - Add `mode` to select `stdout` (default) or `inject` for daemon output.
-- Config supports `model_language` and `model_size` selection with a default of the small general model.
-- Allow overriding the model install path (`model_path`) while keeping a default data directory.
+- Config supports `model_variants` to preload model contexts (`en`, `multilingual`, or `both`) while keeping `language` as the default active context.
+- Config supports `model_size` as a single size setting applied across all model variants.
+- Model selection is automatic per language context (English-optimized for `en`, multilingual otherwise).
 
 ### Audio Capture
 - Use `cpal` to select input device and stream 16 kHz mono.
@@ -71,8 +72,8 @@ This document describes the technical design for the `sv` CLI that performs offl
 
 ### Model Download
 - On `sv`/`sv daemon start` startup, check for the configured model in the default data directory.
-- Download the ggml model if missing, based on `model_language` and `model_size` config (defaults to small + general).
-- If `model_path` is provided, download or resolve the model there instead of the default location.
+- Download the ggml model if missing using the configured `model_size` plus automatic per-language variant.
+- Store models in the default XDG data directory and reuse them across daemon restarts.
 
 ### GPU Backend Selection
 - Build whisper.cpp with GPU backends enabled (Vulkan for AMD/NVIDIA, CUDA for NVIDIA when available).
@@ -98,7 +99,7 @@ This document describes the technical design for the `sv` CLI that performs offl
 
 ## Configuration
 - Format: TOML.
-- Example fields: `model`, `model_path`, `model_size`, `model_language`, `download_model`, `language`, `device`, `sample_rate`, `format`, `vad`, `mode`.
+- Example fields: `download_model`, `model_size`, `model_variants`, `language`, `device`, `sample_rate`, `format`, `vad`, `mode`.
 
 ## Data Flow
 1. CLI loads config and model.
