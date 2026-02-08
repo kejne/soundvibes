@@ -57,12 +57,12 @@ pub enum ModelVariants {
 
 impl ModelVariants {
     pub fn includes(self, model_language: ModelLanguage) -> bool {
-        match (self, model_language) {
-            (ModelVariants::Both, _) => true,
-            (ModelVariants::En, ModelLanguage::En) => true,
-            (ModelVariants::Multilingual, ModelLanguage::Auto) => true,
-            _ => false,
-        }
+        matches!(
+            (self, model_language),
+            (ModelVariants::Both, _)
+                | (ModelVariants::En, ModelLanguage::En)
+                | (ModelVariants::Multilingual, ModelLanguage::Auto)
+        )
     }
 
     pub fn preload(self) -> &'static [ModelLanguage] {

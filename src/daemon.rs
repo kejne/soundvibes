@@ -330,16 +330,19 @@ pub fn run_daemon_loop(
         if shutdown.load(Ordering::Relaxed) {
             if recording {
                 let active_transcriber = active_transcriber(&model_pool, active_variant)?;
-                stop_recording(
-                    active_transcriber,
+                let mut recording_context = RecordingContext {
+                    transcriber: active_transcriber,
                     config,
-                    active_language.as_str(),
-                    &vad,
+                    language: active_language.as_str(),
+                    vad: &vad,
+                    output,
+                    event_sender,
+                };
+                stop_recording(
+                    &mut recording_context,
                     &mut capture,
                     &mut buffer,
                     &mut utterance_index,
-                    output,
-                    event_sender,
                 )?;
                 emit_daemon_event(
                     event_sender,
@@ -372,16 +375,19 @@ pub fn run_daemon_loop(
                             recording = false;
                             let active_transcriber =
                                 active_transcriber(&model_pool, active_variant)?;
-                            stop_recording(
-                                active_transcriber,
+                            let mut recording_context = RecordingContext {
+                                transcriber: active_transcriber,
                                 config,
-                                active_language.as_str(),
-                                &vad,
+                                language: active_language.as_str(),
+                                vad: &vad,
+                                output,
+                                event_sender,
+                            };
+                            stop_recording(
+                                &mut recording_context,
                                 &mut capture,
                                 &mut buffer,
                                 &mut utterance_index,
-                                output,
-                                event_sender,
                             )?;
                             emit_daemon_event(
                                 event_sender,
@@ -477,57 +483,48 @@ pub fn run_daemon_loop(
 }
 
 fn stop_recording(
-    transcriber: &dyn Transcriber,
-    config: &DaemonConfig,
-    language: &str,
-    vad: &audio::VadConfig,
+    context: &mut RecordingContext<'_>,
     capture: &mut Option<Box<dyn CaptureSource>>,
     buffer: &mut Vec<f32>,
     utterance_index: &mut u64,
-    output: &mut dyn DaemonOutput,
-    event_sender: Option<&mpsc::Sender<ipc::DaemonEvent>>,
 ) -> Result<(), AppError> {
     let mut active = capture
         .take()
         .ok_or_else(|| AppError::runtime("capture stream missing"))?;
     active.drain(buffer);
-    finalize_recording(
-        transcriber,
-        config,
-        language,
-        vad,
-        buffer,
-        utterance_index,
-        output,
-        event_sender,
-    )?;
+    finalize_recording(context, buffer, utterance_index)?;
     Ok(())
 }
 
+struct RecordingContext<'a> {
+    transcriber: &'a dyn Transcriber,
+    config: &'a DaemonConfig,
+    language: &'a str,
+    vad: &'a audio::VadConfig,
+    output: &'a mut dyn DaemonOutput,
+    event_sender: Option<&'a mpsc::Sender<ipc::DaemonEvent>>,
+}
+
 fn finalize_recording(
-    transcriber: &dyn Transcriber,
-    config: &DaemonConfig,
-    language: &str,
-    vad: &audio::VadConfig,
+    context: &mut RecordingContext<'_>,
     buffer: &[f32],
     utterance_index: &mut u64,
-    output: &mut dyn DaemonOutput,
-    event_sender: Option<&mpsc::Sender<ipc::DaemonEvent>>,
 ) -> Result<(), AppError> {
-    let trimmed = audio::trim_trailing_silence(buffer, config.sample_rate, vad);
+    let trimmed = audio::trim_trailing_silence(buffer, context.config.sample_rate, context.vad);
     if trimmed.is_empty() {
         return Ok(());
     }
     *utterance_index += 1;
-    let duration_ms = audio::samples_to_ms(trimmed.len(), config.sample_rate);
-    if config.dump_audio {
-        dump_audio_samples(&trimmed, config.sample_rate, output)?;
+    let duration_ms = audio::samples_to_ms(trimmed.len(), context.config.sample_rate);
+    if context.config.dump_audio {
+        dump_audio_samples(&trimmed, context.config.sample_rate, context.output)?;
     }
-    let transcript = transcriber
-        .transcribe(&trimmed, Some(language))
+    let transcript = context
+        .transcriber
+        .transcribe(&trimmed, Some(context.language))
         .map_err(|err| {
             emit_daemon_event(
-                event_sender,
+                context.event_sender,
                 ipc::DaemonEventType::Error {
                     message: err.to_string(),
                 },
@@ -535,8 +532,8 @@ fn finalize_recording(
             AppError::runtime(err.to_string())
         })?;
     emit_transcript(
-        config,
-        output,
+        context.config,
+        context.output,
         &transcript,
         audio::SegmentInfo {
             index: *utterance_index,
@@ -545,15 +542,15 @@ fn finalize_recording(
     )
     .map_err(AppError::runtime)?;
     emit_daemon_event(
-        event_sender,
+        context.event_sender,
         ipc::DaemonEventType::TranscriptFinal {
-            language: language.to_string(),
+            language: context.language.to_string(),
             utterance: *utterance_index,
             duration_ms,
             text: transcript,
         },
     );
-    output.stdout("Ready for next utterance.");
+    context.output.stdout("Ready for next utterance.");
     Ok(())
 }
 
@@ -584,10 +581,10 @@ fn emit_model_loaded_event(
     );
 }
 
-fn active_transcriber<'a>(
-    model_pool: &'a ModelPool,
+fn active_transcriber(
+    model_pool: &ModelPool,
     variant: ModelLanguage,
-) -> Result<&'a dyn Transcriber, AppError> {
+) -> Result<&dyn Transcriber, AppError> {
     model_pool.transcriber_for_variant(variant).ok_or_else(|| {
         AppError::runtime(format!(
             "no transcriber loaded for model variant '{}'",
