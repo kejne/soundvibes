@@ -290,6 +290,7 @@ pub fn run_daemon_loop(
     shutdown: &AtomicBool,
     event_sender: Option<&mpsc::Sender<ipc::DaemonEvent>>,
 ) -> Result<(), AppError> {
+    let mut model_pool = ModelPool::preload(config, deps)?;
     let host = select_audio_host(config.audio_host)?;
     audio::configure_alsa_logging(config.debug_audio);
     let devices = deps
@@ -307,7 +308,6 @@ pub fn run_daemon_loop(
         }
     }
 
-    let mut model_pool = ModelPool::preload(config, deps)?;
     let vad = audio::VadConfig::new(
         config.vad == VadMode::On,
         config.vad_silence_ms,
