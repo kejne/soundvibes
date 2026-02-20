@@ -11,7 +11,7 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
-    "@astrojs/tailwind": "^5.1.1",
+    "@astrojs/tailwind": "^6.0.2",
     "astro": "^5.17.1"
   },
   "devDependencies": {
