@@ -77,6 +77,9 @@ mod socket_ipc;
 mod installer;
 
 #[cfg(feature = "test-support")]
+mod web;
+
+#[cfg(feature = "test-support")]
 mod steps {
     use crate::DaemonWorld;
     use cucumber::{Given, Then, When};
