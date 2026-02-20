@@ -71,6 +71,9 @@ mod model_management;
 mod transcription;
 
 #[cfg(feature = "test-support")]
+mod socket_ipc;
+
+#[cfg(feature = "test-support")]
 mod steps {
     use crate::DaemonWorld;
     use cucumber::{Given, Then, When};
