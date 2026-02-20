@@ -65,6 +65,9 @@ impl Default for DaemonWorld {
 mod daemon_startup;
 
 #[cfg(feature = "test-support")]
+mod model_management;
+
+#[cfg(feature = "test-support")]
 mod steps {
     use crate::DaemonWorld;
     use cucumber::{Given, Then, When};
