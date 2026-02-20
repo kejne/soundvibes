@@ -21,6 +21,11 @@ hound = "3.5.1"
 signal-hook = "0.3.17"
 ureq = "2.12.1"
 
+[dev-dependencies]
+cucumber = "0.22"
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+
 [build-dependencies]
 bindgen = "0.71.0"
 cmake = "0.1.54"
