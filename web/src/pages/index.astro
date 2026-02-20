@@ -29,25 +29,6 @@ import BaseLayout from "../layouts/BaseLayout.astro";
           Documentation
         </a>
       </div>
-
-      <div class="grid gap-3 text-sm text-ink/70 sm:grid-cols-2">
-        <div class="flex items-center gap-2">
-          <span class="h-2 w-2 rounded-full bg-mint"></span>
-          Works fully offline
-        </div>
-        <div class="flex items-center gap-2">
-          <span class="h-2 w-2 rounded-full bg-citrus"></span>
-          Auto model download
-        </div>
-        <div class="flex items-center gap-2">
-          <span class="h-2 w-2 rounded-full bg-coral"></span>
-          Open source
-        </div>
-        <div class="flex items-center gap-2">
-          <span class="h-2 w-2 rounded-full bg-ink"></span>
-          Easy to get started
-        </div>
-      </div>
     </div>
     <div class="glass-card rounded-3xl p-6">
       <div class="rounded-2xl bg-ink px-5 py-6 text-white" data-smoke="quickstart">
@@ -67,174 +48,36 @@ import BaseLayout from "../layouts/BaseLayout.astro";
           Models download automatically on first run. Bind the toggle to any hotkey in your environment.
         </p>
       </div>
-      <div class="mt-6 grid gap-4 text-sm text-ink/70">
-        <div class="rounded-2xl border border-ink/10 bg-white px-4 py-4">
-          <p class="font-semibold text-ink">Vulkan-only dependencies</p>
-          <p>Keep setup lean with just Vulkan libraries on Linux.</p>
-        </div>
-        <div class="rounded-2xl border border-ink/10 bg-white px-4 py-4">
-          <p class="font-semibold text-ink">Auto model download</p>
-          <p>Pick your language, let Soundvibes pull the model once.</p>
-        </div>
-        <div class="rounded-2xl border border-ink/10 bg-white px-4 py-4">
-          <p class="font-semibold text-ink">Fast toggling</p>
-          <p>Toggle capture while you talk, transcripts land when you stop.</p>
-        </div>
-        <div class="rounded-2xl border border-ink/10 bg-white px-4 py-4">
-          <p class="font-semibold text-ink">X11 & Wayland</p>
-          <p>Works seamlessly on both, text appears right where your cursor is.</p>
-        </div>
-      </div>
     </div>
   </section>
 
-  <section id="workflow" class="mx-auto w-full max-w-6xl px-6 py-16">
-    <div class="grid gap-10 lg:grid-cols-[0.9fr_1.1fr] lg:items-center">
-      <div>
-        <p class="text-xs font-semibold uppercase tracking-[0.2em] text-ink/50">Workflow</p>
-        <h2 class="mt-4 font-display text-3xl font-semibold text-ink">A calm toggle rhythm.</h2>
-        <p class="mt-4 text-lg text-ink/70">
-          Start the daemon once, then hotkey the toggle wherever you work. Soundvibes listens locally,
-          trims silence, and prints the transcript when you toggle off.
-        </p>
-        <div class="mt-6 space-y-3 text-sm text-ink/70">
-          <div class="flex items-center gap-3">
-            <span class="flex h-8 w-8 items-center justify-center rounded-full bg-mint text-ink">1</span>
-            Launch the daemon with <span class="font-semibold text-ink">sv daemon start</span>.
-          </div>
-          <div class="flex items-center gap-3">
-            <span class="flex h-8 w-8 items-center justify-center rounded-full bg-citrus text-ink">2</span>
-            Bind <span class="font-semibold text-ink">sv</span> to a hotkey and toggle capture.
-          </div>
-          <div class="flex items-center gap-3">
-            <span class="flex h-8 w-8 items-center justify-center rounded-full bg-coral text-ink">3</span>
-            Transcript appears at cursor after you toggle off.
-          </div>
+  <section id="how-it-works" class="mx-auto w-full max-w-6xl px-6 py-16">
+    <p class="text-xs font-semibold uppercase tracking-[0.2em] text-ink/50">How It Works</p>
+    <h2 class="mt-4 font-display text-3xl font-semibold text-ink">A calm toggle rhythm.</h2>
+    <p class="mt-4 max-w-2xl text-lg text-ink/70">
+      Start the daemon once, then hotkey the toggle wherever you work. Soundvibes listens locally,
+      trims silence, and prints the transcript when you toggle off. Everything stays on your device—no cloud, no network calls.
+    </p>
+    <div class="mt-8 flex flex-col gap-4 text-ink/70 sm:flex-row sm:gap-8">
+      <div class="flex items-start gap-3">
+        <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-mint text-sm font-semibold text-ink">1</span>
+        <div>
+          <p class="font-semibold text-ink">Launch the daemon</p>
+          <p class="text-sm"><code class="rounded bg-ink/10 px-1.5 py-0.5 font-mono text-xs">sv daemon start</code></p>
         </div>
       </div>
-      <div class="glass-card rounded-3xl p-6">
-        <div class="rounded-2xl bg-cloud px-6 py-6">
-          <h3 class="font-display text-2xl font-semibold text-ink">Everything offline.</h3>
-          <p class="mt-3 text-sm text-ink/70">
-            No network calls. No cloud queue. Soundvibes stays on your device, using local models
-            and a reliable on/off cadence that fits your daily flow.
-          </p>
-          <div class="mt-5 grid gap-3 sm:grid-cols-2">
-            <div class="rounded-2xl border border-ink/10 bg-white px-4 py-4">
-              <p class="text-xs font-semibold uppercase tracking-[0.2em] text-ink/50">Models</p>
-              <p class="mt-2 font-semibold text-ink">Auto download on first run</p>
-            </div>
-            <div class="rounded-2xl border border-ink/10 bg-white px-4 py-4">
-              <p class="text-xs font-semibold uppercase tracking-[0.2em] text-ink/50">Audio</p>
-              <p class="mt-2 font-semibold text-ink">Voice activity trimming built in</p>
-            </div>
-          </div>
+      <div class="flex items-start gap-3">
+        <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-citrus text-sm font-semibold text-ink">2</span>
+        <div>
+          <p class="font-semibold text-ink">Bind your hotkey</p>
+          <p class="text-sm"><code class="rounded bg-ink/10 px-1.5 py-0.5 font-mono text-xs">sv</code> to any key</p>
         </div>
       </div>
-    </div>
-  </section>
-
-  <section id="benefits" class="mx-auto w-full max-w-6xl px-6 py-16">
-    <div class="flex flex-col items-start gap-6 md:flex-row md:items-end md:justify-between">
-      <div>
-        <p class="text-xs font-semibold uppercase tracking-[0.2em] text-ink/50">Why Soundvibes</p>
-        <h2 class="mt-4 font-display text-3xl font-semibold text-ink">Focused tooling, fewer distractions.</h2>
-      </div>
-      <p class="max-w-lg text-lg text-ink/70">
-        Soundvibes is designed for low-maintenance capture. Minimal dependencies keep the setup slim,
-        while the model downloader handles the heavy lifting automatically.
-      </p>
-    </div>
-    <div class="mt-10 grid gap-6 md:grid-cols-3">
-      <div class="glass-card rounded-3xl p-6">
-        <h3 class="font-display text-xl font-semibold text-ink">Vulkan-only dependencies</h3>
-        <p class="mt-3 text-sm text-ink/70">
-          Rely on Vulkan libraries and keep the rest of your system untouched.
-        </p>
-      </div>
-      <div class="glass-card rounded-3xl p-6">
-        <h3 class="font-display text-xl font-semibold text-ink">Automatic model download</h3>
-        <p class="mt-3 text-sm text-ink/70">
-          Choose a size once, Soundvibes fetches the matching model the first time you run it.
-        </p>
-      </div>
-      <div class="glass-card rounded-3xl p-6">
-        <h3 class="font-display text-xl font-semibold text-ink">GPU-accelerated speed</h3>
-        <p class="mt-3 text-sm text-ink/70">
-          Uses your GPU for fast transcription without cloud latency.
-        </p>
-      </div>
-    </div>
-  </section>
-
-  <section class="mx-auto w-full max-w-6xl px-6 py-16">
-    <div class="grid gap-10 lg:grid-cols-[1.1fr_0.9fr] lg:items-center">
-      <div>
-        <p class="text-xs font-semibold uppercase tracking-[0.2em] text-ink/50">Use cases</p>
-        <h2 class="mt-4 font-display text-3xl font-semibold text-ink">Everyday voice capture, without friction.</h2>
-        <p class="mt-4 text-lg text-ink/70">
-          Use Soundvibes for vibe coding, to drop short notes between meetings, or transcribe research
-          thoughts. Everything stays local, so you can stay focused offline.
-        </p>
-        <div class="mt-6 grid gap-3 text-sm text-ink/70">
-          <div class="flex items-center gap-3">
-            <span class="h-2 w-2 rounded-full bg-mint"></span>
-            Daily voice notes and journaling
-          </div>
-          <div class="flex items-center gap-3">
-            <span class="h-2 w-2 rounded-full bg-citrus"></span>
-            Vibe coding narration and prompts
-          </div>
-          <div class="flex items-center gap-3">
-            <span class="h-2 w-2 rounded-full bg-coral"></span>
-            Research capture while offline
-          </div>
-        </div>
-      </div>
-      <div class="glass-card rounded-3xl p-6">
-        <div class="rounded-2xl bg-white px-5 py-6">
-          <p class="text-xs font-semibold uppercase tracking-[0.2em] text-ink/50">Session flow</p>
-          <h3 class="mt-4 font-display text-2xl font-semibold text-ink">Stay in the zone.</h3>
-          <p class="mt-3 text-sm text-ink/70">
-            Start the daemon once, then toggle capture whenever you want a short transcript. Minimal
-            overhead, maximum focus.
-          </p>
-          <div class="mt-5 flex flex-wrap gap-3 text-xs font-semibold uppercase tracking-[0.2em] text-ink/50">
-            <span class="rounded-full border border-ink/10 px-3 py-1">Offline</span>
-            <span class="rounded-full border border-ink/10 px-3 py-1">Automatic models</span>
-            <span class="rounded-full border border-ink/10 px-3 py-1">Two commands</span>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <section class="mx-auto w-full max-w-6xl px-6 py-16">
-    <div class="flex flex-col gap-10 lg:flex-row lg:items-start lg:justify-between">
-      <div class="max-w-xl">
-        <p class="text-xs font-semibold uppercase tracking-[0.2em] text-ink/50">FAQ</p>
-        <h2 class="mt-4 font-display text-3xl font-semibold text-ink">Answers, without the noise.</h2>
-        <p class="mt-4 text-lg text-ink/70">
-          Keep it simple. Soundvibes is built around the two commands you need, with models handled for you.
-        </p>
-      </div>
-      <div class="grid gap-4 lg:w-[55%]">
-        <div class="glass-card rounded-2xl p-5">
-          <p class="font-semibold text-ink">Does it run fully offline?</p>
-          <p class="mt-2 text-sm text-ink/70">Yes. After the first model download, everything stays local.</p>
-        </div>
-        <div class="glass-card rounded-2xl p-5">
-          <p class="font-semibold text-ink">How do I start and stop capture?</p>
-          <p class="mt-2 text-sm text-ink/70">
-            Start the daemon with <span class="font-semibold text-ink">sv daemon start</span>, then bind
-            <span class="font-semibold text-ink">sv</span> to a hotkey and toggle on/off.
-          </p>
-        </div>
-        <div class="glass-card rounded-2xl p-5">
-          <p class="font-semibold text-ink">How do I install it?</p>
-          <p class="mt-2 text-sm text-ink/70">
-            Run the install script: <code class="rounded bg-ink/10 px-1 py-0.5 font-mono text-xs">curl -fsSL https://raw.githubusercontent.com/kejne/soundvibes/main/install.sh | sh</code>. It handles everything automatically.
-          </p>
+      <div class="flex items-start gap-3">
+        <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-coral text-sm font-semibold text-ink">3</span>
+        <div>
+          <p class="font-semibold text-ink">Toggle & go</p>
+          <p class="text-sm">Transcript appears at cursor</p>
         </div>
       </div>
     </div>
@@ -242,26 +85,24 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 
   <section id="install" class="mx-auto w-full max-w-6xl px-6 py-16">
     <div class="rounded-3xl bg-ink px-8 py-12 text-white md:px-12">
-      <div class="flex flex-col gap-8 md:flex-row md:items-center md:justify-between">
+      <div class="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
         <div>
           <p class="text-xs font-semibold uppercase tracking-[0.2em] text-white/60">Installation</p>
           <h2 class="mt-4 font-display text-3xl font-semibold">One command to install.</h2>
           <p class="mt-3 max-w-xl text-sm text-white/70">
             The install script handles dependencies, downloads the binary, and sets up configuration automatically.
+            Works on Ubuntu, Debian, Arch, and Fedora.
           </p>
         </div>
-        <div class="flex flex-col gap-3">
-          <a
-            class="rounded-full bg-white px-6 py-3 text-sm font-semibold text-ink transition hover:-translate-y-0.5"
-            href="https://github.com/kejne/soundvibes/releases"
-          >
-            View GitHub Releases
-          </a>
-          <span class="text-xs text-white/60">Or use the install script below.</span>
-        </div>
+        <a
+          class="shrink-0 rounded-full bg-white px-6 py-3 text-sm font-semibold text-ink transition hover:-translate-y-0.5"
+          href="https://github.com/kejne/soundvibes/releases"
+        >
+          View GitHub Releases
+        </a>
       </div>
 
-      <div class="mt-10 rounded-2xl bg-white/10 p-6">
+      <div class="mt-8 rounded-2xl bg-white/10 p-6">
         <p class="text-xs font-semibold uppercase tracking-[0.2em] text-white/60">Quick Install</p>
         <div class="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center">
           <code class="flex-1 rounded-xl bg-white/10 px-4 py-3 font-mono text-sm text-white">
@@ -273,32 +114,6 @@ import BaseLayout from "../layouts/BaseLayout.astro";
           >
             Copy
           </button>
-        </div>
-        <p class="mt-4 text-sm text-white/70">
-          The script auto-detects your distribution, installs dependencies, downloads the latest binary,
-          and optionally sets up a systemd service. Supports Ubuntu, Debian, Arch, and Fedora.
-        </p>
-        <div class="mt-4 flex flex-wrap gap-2 text-xs">
-          <span class="rounded-full bg-white/10 px-3 py-1 text-white/80">Auto-detects distro</span>
-          <span class="rounded-full bg-white/10 px-3 py-1 text-white/80">Installs dependencies</span>
-          <span class="rounded-full bg-white/10 px-3 py-1 text-white/80">Systemd service setup</span>
-          <span class="rounded-full bg-white/10 px-3 py-1 text-white/80">Wayland & X11 support</span>
-        </div>
-      </div>
-
-      <div class="mt-6 grid gap-4 sm:grid-cols-2">
-        <div class="rounded-2xl bg-white/5 p-5">
-          <p class="text-xs font-semibold uppercase tracking-[0.2em] text-white/60">Manual Download</p>
-          <p class="mt-2 text-sm text-white/70">
-            Prefer to install manually? Download the binary directly from <a href="https://github.com/kejne/soundvibes/releases" class="text-white underline hover:text-white/80">GitHub Releases</a>.
-          </p>
-        </div>
-        <div class="rounded-2xl bg-white/5 p-5">
-          <p class="text-xs font-semibold uppercase tracking-[0.2em] text-white/60">Non-Interactive</p>
-          <p class="mt-2 text-sm text-white/70">
-            For automated setups, use <code class="rounded bg-white/10 px-1 py-0.5">--yes</code> flag:
-            <code class="mt-1 block rounded bg-white/10 px-2 py-1 font-mono text-xs">./install.sh --yes</code>
-          </p>
         </div>
       </div>
     </div>
