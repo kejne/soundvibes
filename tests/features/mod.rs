@@ -68,6 +68,9 @@ mod daemon_startup;
 mod model_management;
 
 #[cfg(feature = "test-support")]
+mod transcription;
+
+#[cfg(feature = "test-support")]
 mod steps {
     use crate::DaemonWorld;
     use cucumber::{Given, Then, When};
