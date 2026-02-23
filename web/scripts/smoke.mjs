@@ -5,8 +5,8 @@ const distPath = join(process.cwd(), "dist", "index.html");
 
 const mustContain = [
   "Soundvibes",
-  "Minimal dependencies",
-  "Auto model download",
+  "Vulkan-only",
+  "automatic model downloads",
   "sv daemon start",
   "GitHub Releases",
 ];

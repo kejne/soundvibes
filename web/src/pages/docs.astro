@@ -10,6 +10,7 @@ import BaseLayout from "../layouts/BaseLayout.astro";
         <p class="text-xs font-semibold uppercase tracking-[0.2em] text-ink/50 mb-3">Getting Started</p>
         <ul class="space-y-2 text-sm">
           <li><a href="#quickstart" class="text-ink/70 hover:text-ink transition">Quick Start</a></li>
+          <li><a href="#faq" class="text-ink/70 hover:text-ink transition">FAQ</a></li>
           <li><a href="#installation" class="text-ink/70 hover:text-ink transition">Installation</a></li>
           <li><a href="#workflow-setup" class="text-ink/70 hover:text-ink transition">Setting Up Workflow</a></li>
         </ul>
@@ -72,6 +73,30 @@ import BaseLayout from "../layouts/BaseLayout.astro";
             <p class="font-semibold text-ink mb-2">Toggle recording</p>
             <code class="block rounded-lg bg-ink/5 px-3 py-2 font-mono text-sm text-ink">sv</code>
             <p class="mt-2 text-sm text-ink/60">Run this to start/stop capture. Bind it to a hotkey for easy access.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- FAQ -->
+      <section id="faq" class="space-y-6">
+        <h2 class="font-display text-2xl font-semibold text-ink">Frequently Asked Questions</h2>
+        <div class="space-y-4">
+          <div class="glass-card rounded-2xl p-5">
+            <p class="font-semibold text-ink">Does it run fully offline?</p>
+            <p class="mt-2 text-sm text-ink/70">Yes. After the first model download, everything stays local.</p>
+          </div>
+          <div class="glass-card rounded-2xl p-5">
+            <p class="font-semibold text-ink">How do I start and stop capture?</p>
+            <p class="mt-2 text-sm text-ink/70">
+              Start the daemon with <code class="rounded bg-ink/10 px-1 py-0.5 font-mono text-xs">sv daemon start</code>, then bind
+              <code class="rounded bg-ink/10 px-1 py-0.5 font-mono text-xs">sv</code> to a hotkey and toggle on/off.
+            </p>
+          </div>
+          <div class="glass-card rounded-2xl p-5">
+            <p class="font-semibold text-ink">How do I install it?</p>
+            <p class="mt-2 text-sm text-ink/70">
+              Run the install script: <code class="rounded bg-ink/10 px-1 py-0.5 font-mono text-xs">curl -fsSL https://raw.githubusercontent.com/kejne/soundvibes/main/install.sh | sh</code>. It handles everything automatically.
+            </p>
           </div>
         </div>
       </section>
