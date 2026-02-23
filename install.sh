@@ -164,18 +164,29 @@ install_deps() {
                 vulkan-validationlayers \
                 mesa-vulkan-drivers \
                 curl \
-                unzip
+                unzip \
+                xz-utils
             
             # Install Vulkan SDK for Ubuntu/Debian
-            if ! command_exists glslangValidator && [ ! -d "${HOME}/.local/share/vulkan-sdk" ]; then
+            if ! command_exists glslangValidator; then
                 print_info "Installing Vulkan SDK..."
-                VULKAN_VERSION="1.3.296.0"
-                VULKAN_URL="https://sdk.lunarg.com/sdk/download/${VULKAN_VERSION}/linux/vulkansdk-linux-x86_64-${VULKAN_VERSION}.tar.gz"
+                
+                # Query the Vulkan API for the latest version
+                VULKAN_VERSION=$(curl -fsSL https://vulkan.lunarg.com/sdk/latest/linux.json | grep -o '"linux"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"linux"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
+                
+                if [ -z "$VULKAN_VERSION" ]; then
+                    print_error "Failed to retrieve Vulkan SDK version"
+                    print_info "Please install Vulkan SDK manually or check your internet connection"
+                    return 1
+                fi
+                
+                print_info "Found Vulkan SDK version: $VULKAN_VERSION"
+                VULKAN_URL="https://sdk.lunarg.com/sdk/download/${VULKAN_VERSION}/linux/vulkansdk-linux-x86_64-${VULKAN_VERSION}.tar.xz"
                 
                 mkdir -p "${HOME}/.local/share/vulkan-sdk"
-                curl -L "$VULKAN_URL" -o "/tmp/vulkan-sdk.tar.gz"
-                tar -xzf "/tmp/vulkan-sdk.tar.gz" -C "${HOME}/.local/share/vulkan-sdk"
-                rm "/tmp/vulkan-sdk.tar.gz"
+                curl -L "$VULKAN_URL" -o "/tmp/vulkan-sdk.tar.xz"
+                tar -xf "/tmp/vulkan-sdk.tar.xz" -C "${HOME}/.local/share/vulkan-sdk"
+                rm "/tmp/vulkan-sdk.tar.xz"
                 print_success "Vulkan SDK installed to ~/.local/share/vulkan-sdk"
             fi
             ;;
